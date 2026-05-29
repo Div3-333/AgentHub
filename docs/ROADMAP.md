@@ -5,12 +5,12 @@
 - [x] Directory structure setup.
 - [x] `GEMINI.md` project-level instructions.
 
-## Phase 2: Project Scaffolding
-- [ ] Initialize Cargo project.
-- [ ] Add dependencies (`ratatui`, `tokio`, `crossterm`, `serde`).
-- [ ] Basic TUI "Hello World" with dummy panes.
+## Phase 2: Project Scaffolding (COMPLETE)
+- [x] Initialize Cargo project.
+- [x] Add dependencies (`ratatui`, `tokio`, `crossterm`, `serde`).
+- [x] Basic TUI "Hello World" with dummy panes.
 
-## Phase 3: Process Management
+## Phase 3: Process Management (NEXT)
 - [ ] Implement `AgentAdapter` trait.
 - [ ] Implement `LocalProcess` wrapper for standard CLIs.
 - [ ] Test with a mock CLI (echo-style).
