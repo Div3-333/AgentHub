@@ -9,7 +9,9 @@ pub mod loop_engine;
 #[cfg(feature = "full")]
 pub mod pty_bridge;
 
-pub use parser::{parse, AgentStage, PipelineParseError, PipelineStage, UnixStage};
+pub use parser::{
+    is_pipeline_input, parse, AgentStage, PipelineParseError, PipelineStage, UnixStage,
+};
 
 #[cfg(feature = "full")]
 pub use executor::{PipelineExecutor, PipelineResult, AGENT_STAGE_TIMEOUT, UNIX_STAGE_TIMEOUT};

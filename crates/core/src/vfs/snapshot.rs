@@ -99,29 +99,6 @@ pub fn is_snapshot_command(input: &str) -> bool {
         || input.trim().eq_ignore_ascii_case("/snapshot")
 }
 
-/// Handles `/snapshot` and returns a user-facing status line.
-pub async fn handle_slash_command(
-    input: &str,
-    db: &DbClient,
-    config: &AgentHubConfig,
-    cwd: &Path,
-    session_id: Uuid,
-    bus_tx: Option<&broadcast::Sender<BusEvent>>,
-) -> Result<Option<String>> {
-    if !is_snapshot_command(input) {
-        return Ok(None);
-    }
-
-    let info =
-        create_snapshot_with_config(db, config, cwd, session_id, SnapshotTrigger::Manual, bus_tx)
-            .await?;
-
-    Ok(Some(format!(
-        "[VFS]: Snapshot {} created ({} files, {} bytes).",
-        info.id, info.file_count, info.size_bytes
-    )))
-}
-
 /// Creates a snapshot of `cwd` and records it in SQLite.
 pub async fn create_snapshot(
     pool: &SqlitePool,
@@ -746,10 +723,18 @@ mod tests {
 
         let (bus_tx, mut bus_rx) = broadcast::channel(BUS_CAPACITY);
 
-        let msg = handle_slash_command("/snapshot", &db, &config, cwd, session_id, Some(&bus_tx))
-            .await
-            .expect("handle")
-            .expect("response");
+        let msg = crate::vfs::handle_slash_command(
+            "/snapshot",
+            &db,
+            &config,
+            cwd,
+            session_id,
+            Some(&bus_tx),
+            None,
+        )
+        .await
+        .expect("handle")
+        .expect("response");
 
         assert!(msg.contains("[VFS]"));
         assert!(matches!(

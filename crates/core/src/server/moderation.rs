@@ -29,6 +29,8 @@ pub struct ModerationContext {
     pub config: Arc<AgentHubConfig>,
     pub db: Option<Arc<DbClient>>,
     pub bus_tx: broadcast::Sender<BusEvent>,
+    pub session_id: Uuid,
+    pub cwd: std::path::PathBuf,
     /// Display name of who issued the command (e.g. `"user"`, `"system"`).
     pub issued_by: String,
     /// When set, RBAC checks apply to this agent in Server mode.
@@ -55,8 +57,9 @@ pub async fn try_handle_slash_command(
     cwd: &Path,
     session_id: Uuid,
     bus_tx: Option<&broadcast::Sender<BusEvent>>,
+    state: Option<&ServerState>,
 ) -> Result<Option<String>> {
-    crate::vfs::handle_slash_command(input, db, config, cwd, session_id, bus_tx).await
+    crate::vfs::handle_slash_command(input, db, config, cwd, session_id, bus_tx, state).await
 }
 
 /// Parses and executes a moderation slash command (blueprint §8.3).
@@ -84,6 +87,7 @@ pub async fn execute_command(ctx: &ModerationContext, line: &str) -> Result<Stri
         "mode" => cmd_mode(ctx, &parts[1..]).await,
         "setprompt" => cmd_setprompt(ctx, &parts[1..]).await,
         "spawn" => cmd_spawn(ctx, &parts[1..]).await,
+        "spar" => cmd_spar(ctx, line).await,
         other => Err(AgentHubError::Config(format!("unknown command: /{other}"))),
     }
 }
@@ -563,6 +567,34 @@ async fn cmd_spawn(ctx: &ModerationContext, args: &[&str]) -> Result<String> {
         .unwrap_or(tag_preview);
 
     Ok(format!("spawned @{tag}"))
+}
+
+async fn cmd_spar(ctx: &ModerationContext, line: &str) -> Result<String> {
+    use crate::pipeline::{parse_spar_command, SparEngine};
+
+    let spar = parse_spar_command(line)?;
+    let engine = SparEngine::new(
+        Arc::clone(&ctx.state),
+        ctx.bus_tx.clone(),
+        &ctx.cwd,
+        ctx.session_id,
+        (*ctx.config).clone(),
+        ctx.db.clone(),
+    );
+    let result = engine.run(&spar).await?;
+    if result.aborted {
+        return Ok("[Spar]: Aborted.".into());
+    }
+    if result.stagnation {
+        return Ok(format!(
+            "[Spar]: Stagnation detected after {} turns. Last: {}",
+            result.turns_completed, result.last_output
+        ));
+    }
+    Ok(format!(
+        "[Spar]: Completed {} turns. Last: {}",
+        result.turns_completed, result.last_output
+    ))
 }
 
 async fn cmd_setprompt(ctx: &ModerationContext, args: &[&str]) -> Result<String> {

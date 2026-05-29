@@ -470,6 +470,7 @@ async fn dispatch_slash_core(
         &bridge.cwd,
         bridge.session_id,
         Some(&bridge.bus_tx),
+        Some(&bridge.moderation.state),
     )
     .await?
     {
@@ -775,6 +776,8 @@ mod tests {
                     config: Arc::clone(&config),
                     db: Some(Arc::clone(&db)),
                     bus_tx: bus_tx.clone(),
+                    session_id,
+                    cwd: cwd.clone(),
                     issued_by: "user".into(),
                     caller_agent_id: None,
                 }),

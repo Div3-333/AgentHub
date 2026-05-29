@@ -5,6 +5,11 @@
 //! bus router, then [`agenthub_tui::run_with_bridge`] (no demo data, no auto-spawn).
 
 fn main() {
+    if std::env::args().any(|a| a == "--version" || a == "-V") {
+        println!("agenthub {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+
     if let Err(err) = agenthub::bootstrap::run() {
         eprintln!("agenthub: {err:#}");
         std::process::exit(1);

@@ -1,10 +1,13 @@
 //! Bus routing task (blueprint §7.2). Pure routing lives in [`super::routing`];
 //! LLM Racing lives in [`super::racing`].
 
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Utc;
+use parking_lot::RwLock;
 use tokio::sync::{broadcast, mpsc};
 use tracing::warn;
 use uuid::Uuid;
@@ -16,7 +19,10 @@ use crate::bus::routing::{
     AgentRouteInfo, RouteAgentStatus, USER_SENDER_TAG,
 };
 use crate::bus::BUS_CHANNEL_CAPACITY;
+use crate::config::AgentHubConfig;
+use crate::context::{inject_context, AstIndexer};
 use crate::db::DbClient;
+use crate::pipeline::{is_pipeline_input, PipelineExecutor};
 use crate::pty::PtyStatus;
 use crate::server::modes::{self, filter_recipients_by_channel};
 use crate::server::ServerState;
@@ -48,10 +54,14 @@ pub fn create_bus_channel() -> (broadcast::Sender<BusEvent>, broadcast::Receiver
 }
 
 /// Start the `BusRouter` task (blueprint §7.2 + §11 racing).
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_bus_router(
     state: Arc<ServerState>,
     db: Option<Arc<DbClient>>,
     session_id: Uuid,
+    cwd: PathBuf,
+    config: Arc<AgentHubConfig>,
+    context_index: Arc<RwLock<AstIndexer>>,
 ) -> BusRouterChannels {
     let (bus_tx, _) = broadcast::channel(BUS_CHANNEL_CAPACITY);
     let (tui_tx, tui_rx) = mpsc::unbounded_channel();
@@ -59,6 +69,11 @@ pub fn spawn_bus_router(
     let racing = Arc::new(RacingRegistry::new());
     let racing_task = Arc::clone(&racing);
     let bus_tx_loop = bus_tx.clone();
+    let router_ctx = RouterContext {
+        cwd,
+        config,
+        context_index,
+    };
 
     tokio::spawn(async move {
         loop {
@@ -91,9 +106,10 @@ pub fn spawn_bus_router(
                         mode,
                         &event,
                         session_id,
-                        db.as_deref(),
+                        db.clone(),
                         &racing_task,
                         &bus_tx_loop,
+                        &router_ctx,
                     )
                     .await;
 
@@ -186,14 +202,33 @@ async fn inject_to_recipients(
     }
 }
 
+/// Shared routing context for the bus loop (avoids oversized argument lists).
+struct RouterContext {
+    cwd: PathBuf,
+    config: Arc<AgentHubConfig>,
+    context_index: Arc<RwLock<AstIndexer>>,
+}
+
+fn apply_auto_context(content: &str, cwd: &std::path::Path, index: &RwLock<AstIndexer>) -> String {
+    match inject_context(content, cwd, &index.read()) {
+        Ok(enriched) => enriched,
+        Err(e) => {
+            warn!(%e, "auto-context injection failed; sending raw prompt");
+            content.to_string()
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn route_message_injection(
     state: &Arc<ServerState>,
     mode: WorkspaceModeRepr,
     event: &BusEvent,
     hub_session_id: Uuid,
-    db: Option<&DbClient>,
+    db: Option<Arc<DbClient>>,
     racing: &RacingRegistry,
     bus_tx: &broadcast::Sender<BusEvent>,
+    ctx: &RouterContext,
 ) {
     let agents = collect_route_info(state);
     let thinking_count = count_thinking_agents(state);
@@ -206,7 +241,7 @@ async fn route_message_injection(
                 hub_session_id,
                 Arc::clone(state),
                 racing,
-                db,
+                db.as_deref(),
                 content,
                 None,
                 bus_tx,
@@ -217,10 +252,49 @@ async fn route_message_injection(
                 RacingDispatch::NotRacing => {}
             }
 
-            let effective = resolve_mention_target(content, target, &agents);
+            if is_pipeline_input(content) {
+                let state = Arc::clone(state);
+                let content = content.to_string();
+                let bus_tx = bus_tx.clone();
+                let cwd = ctx.cwd.clone();
+                let config = Arc::clone(&ctx.config);
+                let db = db.clone();
+                tokio::spawn(async move {
+                    let executor = PipelineExecutor::new(
+                        state,
+                        bus_tx.clone(),
+                        cwd,
+                        hub_session_id,
+                        (*config).clone(),
+                        db,
+                    );
+                    match executor.execute(&content).await {
+                        Ok(result) => {
+                            let preview: String = result.final_output.chars().take(240).collect();
+                            let _ = bus_tx.send(BusEvent::SystemMessage {
+                                content: format!(
+                                    "[System]: Pipeline {} finished. Output: {preview}",
+                                    result.pipeline_id
+                                ),
+                                timestamp: Utc::now(),
+                            });
+                        }
+                        Err(e) => {
+                            let _ = bus_tx.send(BusEvent::SystemMessage {
+                                content: format!("[System]: Pipeline failed: {e}"),
+                                timestamp: Utc::now(),
+                            });
+                        }
+                    }
+                });
+                return;
+            }
+
+            let enriched = apply_auto_context(content, &ctx.cwd, &ctx.context_index);
+            let effective = resolve_mention_target(&enriched, target, &agents);
             let mut recipients = resolve_recipients(&agents, mode, None, &effective, true);
-            recipients = filter_recipients_by_channel(state, content, recipients);
-            let payload = format_injection(USER_SENDER_TAG, content);
+            recipients = filter_recipients_by_channel(state, &enriched, recipients);
+            let payload = format_injection(USER_SENDER_TAG, &enriched);
             inject_to_recipients(state, &recipients, &payload, mode, thinking_count).await;
         }
         BusEvent::AgentMessage {
@@ -250,7 +324,16 @@ mod tests {
     use chrono::Utc;
 
     use crate::bus::event::MODE_GROUP_CHAT;
+    use crate::config::AgentHubConfig;
+    use crate::context::AstIndexer;
     use crate::pty::mock_agent_with_capture;
+
+    fn test_router_env() -> (PathBuf, Arc<AgentHubConfig>, Arc<RwLock<AstIndexer>>) {
+        let cwd = PathBuf::from(".");
+        let config = Arc::new(AgentHubConfig::default());
+        let index = Arc::new(RwLock::new(AstIndexer::new(&cwd)));
+        (cwd, config, index)
+    }
 
     fn group_chat_state() -> Arc<ServerState> {
         let state = Arc::new(ServerState::new());
@@ -266,7 +349,15 @@ mod tests {
         state.agents.insert(a1.id, a1);
         state.agents.insert(a2.id, a2);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "hello all".into(),
             timestamp: Utc::now(),
@@ -296,7 +387,15 @@ mod tests {
         state.agents.insert(listening.id, listening);
         state.agents.insert(deafened.id, deafened);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "broadcast check".into(),
             timestamp: Utc::now(),
@@ -323,7 +422,15 @@ mod tests {
         state.agents.insert(mentioned.id, mentioned);
         state.agents.insert(other.id, other);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "@gemini-1 direct ping".into(),
             timestamp: Utc::now(),
@@ -351,7 +458,15 @@ mod tests {
         state.agents.insert(gemini.id, gemini);
         state.agents.insert(claude_id, claude);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::AgentMessage {
             id: claude_id,
             tag: "claude-2".into(),
@@ -380,7 +495,15 @@ mod tests {
         state.agents.insert(a1.id, a1);
         state.agents.insert(a2.id, a2);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "@mock-1 @mock-2 write tests".into(),
             timestamp: Utc::now(),
@@ -404,7 +527,8 @@ mod tests {
     #[tokio::test]
     async fn bus_router_forwards_events_to_tui_channel() {
         let state = group_chat_state();
-        let channels = spawn_bus_router(state, None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(state, None, Uuid::new_v4(), cwd, config, index);
         let mut tui_rx = channels.tui_rx;
 
         let _ = channels.bus_tx.send(BusEvent::SystemMessage {
@@ -432,7 +556,15 @@ mod tests {
         state.agents.insert(active.id, active);
         state.agents.insert(suspended.id, suspended);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "room broadcast".into(),
             timestamp: Utc::now(),
@@ -459,7 +591,15 @@ mod tests {
         state.agents.insert(a.id, a);
         state.agents.insert(b.id, b);
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4());
+        let (cwd, config, index) = test_router_env();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            Uuid::new_v4(),
+            cwd,
+            config,
+            index,
+        );
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "stagger probe".into(),
             timestamp: Utc::now(),

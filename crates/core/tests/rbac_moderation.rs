@@ -1,6 +1,7 @@
 // Phase 6 DoD: RBAC, moderation slash commands, and grand induction (blueprint §8).
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -61,6 +62,8 @@ fn moderation_ctx(
         config: Arc::new(AgentHubConfig::default()),
         db: None,
         bus_tx,
+        session_id: Uuid::new_v4(),
+        cwd: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         issued_by: "user".to_string(),
         caller_agent_id: None,
     }
@@ -272,6 +275,8 @@ async fn agent_caller_without_modify_roles_denied_promote() {
         config: Arc::new(AgentHubConfig::default()),
         db: None,
         bus_tx,
+        session_id: Uuid::new_v4(),
+        cwd: PathBuf::from("."),
         issued_by: "agent".to_string(),
         caller_agent_id: Some(mod_id),
     };
@@ -285,6 +290,8 @@ async fn agent_caller_without_modify_roles_denied_promote() {
         config: Arc::new(AgentHubConfig::default()),
         db: None,
         bus_tx: broadcast::channel(BUS_CAPACITY).0,
+        session_id: Uuid::new_v4(),
+        cwd: PathBuf::from("."),
         issued_by: "agent".to_string(),
         caller_agent_id: Some(builder_id),
     };

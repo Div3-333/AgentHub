@@ -49,6 +49,16 @@ pub fn parse(input: &str) -> Result<Vec<PipelineStage>> {
     parse_inner(input).map_err(Into::into)
 }
 
+/// True when `input` looks like a Frankenstein pipeline (not racing: racing has no ` | `).
+#[must_use]
+pub fn is_pipeline_input(input: &str) -> bool {
+    let trimmed = input.trim();
+    if !trimmed.contains(" | ") {
+        return false;
+    }
+    parse(trimmed).is_ok()
+}
+
 fn parse_inner(input: &str) -> ParseResult<Vec<PipelineStage>> {
     if input.trim().is_empty() {
         return Err(PipelineParseError {

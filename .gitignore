@@ -4,6 +4,8 @@
 # AgentHub runtime artifacts
 .agenthub_shadow/
 *.db
+smoke_test.log
+gemini_context.txt
 
 # Secrets and local env
 .env

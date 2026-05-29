@@ -44,40 +44,35 @@ High-level product milestones. Phase-level Definition of Done and engineering de
 | `cargo clippy --workspace --all-features -- -D warnings` | CI |
 | Blueprint Part 19 shippable criteria | Met in spec (see blueprint table) |
 
-### Known v0.1 gaps (documented, not hidden)
+### Known v0.1 gaps (resolved in v0.2)
 
-These appear in `/help` or the blueprint but are **not** fully wired from the TUI chat line yet:
+See **v0.2 — Shipped** below. Remaining polish:
 
 | Gap | Workaround today |
 |-----|------------------|
-| **`/undo` / Ctrl+Z** | `VfsEngine::revert_latest` works in tests; slash dispatch only handles `/snapshot` via `vfs::handle_slash_command` — `/undo` returns “unknown command” until v0.2 |
-| **`/spar`** | Run via `SparEngine` in tests or embed in bootstrap; not in `execute_command` |
-| **Frankenstein pipeline in chat** | Use `PipelineExecutor::execute` from code/tests; typing `@a \| > cmd \| @b` sends a normal `UserMessage`, not a pipeline run |
-| **Auto-context on send** | Call `context::inject_context` explicitly; bus router does not prepend file/symbol snippets yet |
-| **Channel management UI** | `create_channel` / assign agents via core API; no `/channel` slash command |
-| **GitHub release assets** | Appear when a maintainer pushes a `v*` tag |
+| **Interactive revert confirm** | `/undo` runs immediately; TUI confirmation UX planned for v0.3 |
+| **Channel management UI** | `create_channel` via core API; no `/channel` slash yet |
+| **GitHub release assets** | Push `v0.2.0` tag to publish binaries |
 
 ---
 
-## v0.2 — Planned
+## v0.2 — Shipped (0.2.0)
 
-**Goal:** End-user polish — everything advertised in `/help` works from the TUI without reading source, plus optional power features.
+**Goal:** Everything advertised in `/help` works from the TUI input line.
 
-### User-facing
+### Wired in v0.2
 
-- [ ] Wire **`/undo`** and **Ctrl+Z** through `vfs::handle_slash_command` (or moderation delegate) with confirmation UX
-- [ ] Wire **`/spar`** to `SparEngine` from slash dispatch; **Esc** → `SPAR_ABORT` (already in core)
-- [ ] Detect **` | `** pipeline syntax on submit; run `PipelineExecutor` and drive sidebar `pipeline_viz` from bus events
-- [ ] Hook **`context::inject_context`** in the bus path before PTY inject (respect `--nocontext`)
-- [ ] Interactive revert: confirm overwrite / delete-new-files prompts in TUI (core messages exist)
-- [ ] Publish **v0.2.0** release binaries for all `release.yml` targets; verify [INSTALL.md](INSTALL.md) on clean machines
-- [ ] Optional: slash commands for **channels** (`/channel create`, assign agent) in Server mode
+| Feature | Status |
+|---------|--------|
+| **`/undo` / Ctrl+Z** | `vfs::handle_slash_command` — reverts latest snapshot |
+| **`/spar`** | `moderation::execute_command` → `SparEngine` |
+| **Frankenstein pipeline** | `@a \| > cmd \| @b` on submit → `PipelineExecutor` via bus router |
+| **Auto-context** | `inject_context` on bus before PTY inject (respects `--nocontext`) |
+| **`agenthub --version`** | Prints workspace package version |
 
-### Platform & ops
+---
 
-- [ ] Linux **eBPF** subagent ring-buffer drain (polling remains fallback)
-- [ ] Harden Windows freeze/resume paths for VFS revert where stubs still log warnings
-- [ ] `agenthub --version` and richer first-run banner (driver detection hints)
+## v0.3 — Planned
 
 ### Nice-to-have (post v0.2)
 

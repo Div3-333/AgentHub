@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agenthub_core::bus::{spawn_bus_router, BusEvent, MessageTarget, OfflineReason};
+use agenthub_core::context::AstIndexer;
+use parking_lot::RwLock;
 use agenthub_core::config::{load_driver_profile_from_dir, AgentHubConfig, DriverProfile};
 use agenthub_core::db::{DbClient, NewSession};
 use agenthub_core::pipeline::pty_bridge::spawn_agent_message_bridge;
@@ -172,7 +174,17 @@ async fn smoke_config_db_bus_mock_cli_roundtrip() {
         let state = Arc::new(ServerState::new());
         set_mode(&state, WorkspaceModeId::GroupChat).expect("workspace mode");
 
-        let channels = spawn_bus_router(Arc::clone(&state), None, session_id);
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let context_index = Arc::new(RwLock::new(AstIndexer::new(&cwd)));
+        let _ = context_index.write().index_all();
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            None,
+            session_id,
+            cwd,
+            Arc::clone(&config),
+            context_index,
+        );
         let bus_tx = channels.bus_tx.clone();
         let mut bus_rx = bus_tx.subscribe();
         let mut tui_rx = channels.tui_rx;

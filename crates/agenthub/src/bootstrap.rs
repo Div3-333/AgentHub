@@ -7,6 +7,8 @@ use std::time::Duration;
 
 use agenthub_core::bus::{spawn_bus_router, BusEvent};
 use agenthub_core::config::{AgentHubConfig, WorkspaceMode};
+use agenthub_core::context::AstIndexer;
+use parking_lot::RwLock;
 use agenthub_core::db::{DbClient, NewSession};
 use agenthub_core::server::moderation::ModerationContext;
 use agenthub_core::server::modes::{set_mode, WorkspaceModeId};
@@ -102,7 +104,24 @@ impl AgentHubStack {
         // First run: config.json is created by `AgentHubConfig::load()`; we do not auto-spawn
         // any driver PTYs — the user starts agents via `/spawn <driver>` or F5 in the TUI.
 
-        let channels = spawn_bus_router(Arc::clone(&state), Some(Arc::clone(&db)), session_id);
+        let context_index = Arc::new(RwLock::new(AstIndexer::new(&cwd)));
+        {
+            let index = Arc::clone(&context_index);
+            std::thread::spawn(move || {
+                if let Err(e) = index.write().index_all() {
+                    tracing::warn!(%e, "initial AST index failed");
+                }
+            });
+        }
+
+        let channels = spawn_bus_router(
+            Arc::clone(&state),
+            Some(Arc::clone(&db)),
+            session_id,
+            cwd.clone(),
+            Arc::clone(&config),
+            context_index,
+        );
         install_global_shutdown(Arc::clone(&state), channels.bus_tx.clone());
 
         Ok(BootInner {
@@ -122,6 +141,8 @@ impl AgentHubStack {
             config: Arc::clone(&self.config),
             db: Some(Arc::clone(&self.db)),
             bus_tx: self.bus_tx.clone(),
+            session_id: self.session_id,
+            cwd: self.cwd.clone(),
             issued_by: "user".to_string(),
             caller_agent_id: None,
         }

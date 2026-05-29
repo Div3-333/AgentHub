@@ -26,6 +26,7 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 sqlx = { workspace = true }
 chrono = { workspace = true }
+parking_lot = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 libc = "0.2"

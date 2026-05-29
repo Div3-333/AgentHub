@@ -10,13 +10,18 @@ use tokio::sync::broadcast;
 use uuid::Uuid;
 
 use crate::bus::BusEvent;
+use crate::config::AgentHubConfig;
 use crate::db::DbClient;
 use crate::error::{AgentHubError, Result};
+use crate::server::ServerState;
 
-pub use revert::{freeze_agent_pids, resume_agent_pids, RevertOptions, RevertResult};
+pub use revert::{
+    freeze_agent_pids, is_undo_command, resume_agent_pids, revert_success_message, RevertOptions,
+    RevertResult,
+};
 pub use snapshot::{
-    create_snapshot, create_snapshot_with_config, handle_slash_command, is_snapshot_command,
-    resolve_shadow_dir, SnapshotInfo, SnapshotTrigger, MAX_SNAPSHOTS,
+    create_snapshot, create_snapshot_with_config, is_snapshot_command, resolve_shadow_dir,
+    SnapshotInfo, SnapshotTrigger, MAX_SNAPSHOTS,
 };
 
 /// Engine coordinating snapshot creation and revert for one workspace.
@@ -135,6 +140,63 @@ pub fn rel_path_string(cwd: &Path, path: &Path) -> Result<String> {
         ))
     })?;
     Ok(rel.to_string_lossy().replace('\\', "/"))
+}
+
+/// Handles `/snapshot` and `/undo` slash commands.
+pub async fn handle_slash_command(
+    input: &str,
+    db: &DbClient,
+    config: &AgentHubConfig,
+    cwd: &Path,
+    session_id: Uuid,
+    bus_tx: Option<&broadcast::Sender<BusEvent>>,
+    state: Option<&ServerState>,
+) -> Result<Option<String>> {
+    if snapshot::is_snapshot_command(input) {
+        let info = snapshot::create_snapshot_with_config(
+            db,
+            config,
+            cwd,
+            session_id,
+            SnapshotTrigger::Manual,
+            bus_tx,
+        )
+        .await?;
+        return Ok(Some(format!(
+            "[VFS]: Snapshot {} created ({} files, {} bytes).",
+            info.id, info.file_count, info.size_bytes
+        )));
+    }
+
+    if revert::is_undo_command(input) {
+        let shadow = snapshot::resolve_shadow_dir(config, cwd);
+        let pids = state.map(collect_agent_pids).unwrap_or_default();
+        let result = revert::revert_latest(
+            &db.pool,
+            cwd,
+            &shadow,
+            RevertOptions {
+                delete_new_files: true,
+                dry_run: false,
+            },
+            &pids,
+            bus_tx,
+        )
+        .await?;
+        return Ok(Some(revert_success_message(result.files_restored)));
+    }
+
+    Ok(None)
+}
+
+#[cfg(any(feature = "full", feature = "bus-tests"))]
+fn collect_agent_pids(state: &ServerState) -> Vec<u32> {
+    state
+        .agents
+        .iter()
+        .map(|entry| entry.value().pid)
+        .filter(|&pid| pid != 0)
+        .collect()
 }
 
 /// On-disk location of a copied file inside a snapshot directory.
