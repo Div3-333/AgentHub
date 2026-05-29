@@ -47,6 +47,7 @@ This is not a high-level guide. This is a low-level, atomic implementation bluep
     3. Inside the loop, allocate a buffer: `let mut buf = [0u8; 4096];`
     4. Read bytes. If `bytes_read == 0`, the process died. Break loop and emit `ProcessDeathEvent`.
     5. Transmit the raw bytes via a multi-producer, single-consumer `tokio::sync::mpsc::Sender<Vec<u8>>` channel to the Sanitizer module.
+    6. **[GOD-TIER SURGICAL INSERT: Backpressure Mitigation]**: Do NOT use an unbounded channel. Use `tokio::sync::mpsc::channel(1024)`. If `try_send` fails (channel full), you must immediately trigger a `DropOldest` routine wrapping the sender to ensure the PTY reader thread never blocks, preventing catastrophic OS pipe deadlocks.
 
 ### 1.3 `subagent.rs`: OS-Level Process Hooking
 **Objective:** Intercept sub-processes spawned by the primary CLI (e.g., Aider spawning a search script).
