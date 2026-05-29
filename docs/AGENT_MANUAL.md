@@ -1,213 +1,182 @@
-# AGENTHUB: THE MONOLITHIC CONSTRUCTION MANUAL (V4: ENTERPRISE SPEC)
+# AGENTHUB: THE MONOLITHIC CONSTRUCTION MANUAL (V5: TRUE ENTERPRISE SYSTEMS SPECIFICATION)
 
 **TARGET AUDIENCE:** Autonomous AI Engineering Agents & Senior Systems Programmers
-**STATUS:** STRICT INSTRUCTION SET (DEVIATION IS CAUSE FOR REJECTION)
+**STATUS:** STRICT INSTRUCTION SET. NO ABSTRACTIONS. NO ASSUMPTIONS.
 **AUTHOR:** World-Class Systems Architect
 
-## 0. PREAMBLE & INVARIANTS
-This is not a high-level guide. This is a low-level, atomic implementation blueprint. You are to write the Rust code exactly as structurally defined here.
-*   **Zero External APIs:** Do not use `reqwest` to hit LLM endpoints. All interaction is via local PTY manipulation.
-*   **Memory Safety:** Strict adherence to `Send + Sync` bounds. No `unsafe` blocks unless explicitly wrapping OS-level syscalls for process management.
-*   **Error Handling:** Use the `thiserror` crate for all module-specific errors. Never use `unwrap()` or `expect()` in production paths.
+## 0. PREAMBLE & INVARIANTS (THE LAWS OF PHYSICS)
+This specification dictates the physical memory layout, concurrency models, and algorithmic complexities required to build AgentHub. You will not rely on garbage collection or unbounded queues.
+1. **Memory Ordering:** All atomic operations must explicitly declare their memory ordering (`Ordering::SeqCst` for coordination, `Ordering::Acquire`/`Ordering::Release` for lock-free synchronization, `Ordering::Relaxed` ONLY for statistical counters).
+2. **Allocation:** Heap allocations inside the hot-path (PTY reading, stream parsing) are STRICTLY FORBIDDEN. All buffers must be pre-allocated and managed via `bumpalo` (Arena Allocation) or object pools (`crossbeam-queue`).
+3. **Concurrency:** `std::sync::Mutex` is banned in the hot-path. Use `tokio::sync::RwLock` for async state, and `crossbeam::epoch` for lock-free concurrent data structures.
+4. **Error Handling:** Every `Result` must be mapped to a custom `thiserror` enum that implements `Into<u16>` for deterministic exit codes mapping to POSIX standards.
 
 ---
 
-## MODULE 1: THE PHANTOM PTY ENGINE (`crates/core/src/pty/`)
+## MODULE 1: THE HYPER-CONCURRENT PTY ENGINE (`crates/core/src/pty/`)
 
-### 1.1 `manager.rs`: PTY Lifecycle & Spawning
-**Objective:** Spawn isolated, invisible pseudo-terminals that convince CLIs they are running in an interactive TTY.
-*   **Dependencies:** `portable-pty = "0.8"`, `tokio = { version = "1.40", features = ["full"] }`
+### 1.1 `manager.rs`: PTY Lifecycle & OS-Level Spawning
+**Objective:** Spawn isolated PTYs with absolute guarantee against zombie processes and descriptor leaks.
+*   **Dependencies:** `portable-pty = "0.8"`, `libc = "0.2"` (Unix), `winapi = "0.3"` (Windows).
 *   **Data Structures:**
     ```rust
-    use portable_pty::{CommandBuilder, NativePtySystem, PtySize, PtySystem, MasterPty, Child};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
-
+    #[repr(C, align(64))] // Cache-line alignment to prevent false sharing
     pub struct AgentPty {
-        pub id: String,
-        pub role: crate::roles::AgentRole,
-        pub master: Arc<Mutex<Box<dyn MasterPty + Send + Sync>>>,
-        pub child: Box<dyn Child + Send + Sync>,
-        pub status: AtomicU8, // 0 = Spawning, 1 = Online, 2 = Offline
+        pub id: uuid::Uuid,
+        pub role_mask: AtomicU32,
+        pub master_fd: RawFd, // Store raw descriptor for io_uring/epoll polling
+        pub process_id: u32,
+        status: AtomicU8, 
     }
     ```
-*   **Implementation Steps:**
-    1. Initialize `NativePtySystem`.
-    2. Define `PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 }`.
-    3. Create a `CommandBuilder` using the provided executable path (e.g., `gemini-cli`).
-    4. Inject environment variables: `TERM=xterm-256color` and `COLORTERM=truecolor` to force the CLI to emit ANSI codes (which we need for heuristic parsing).
-    5. Call `pty_system.spawn_pty_async()`.
-    6. Return the `AgentPty` struct.
+*   **Implementation Specs (Unix):**
+    1. Call `openpty()` via `libc`. Set `O_NONBLOCK` on the master file descriptor immediately using `fcntl()`.
+    2. Before `fork()`, configure `termios`: Disable `ECHO`, `ICANON`, `ISIG`. Set `VMIN=1`, `VTIME=0`.
+    3. Post `fork()`, in the child process: Call `setsid()` to create a new session. `dup2` the slave PTY to `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO`. Close all other file descriptors above 2 to prevent leaking secure daemon sockets to the untrusted CLI agent.
+    4. Execute `execvp`.
+*   **Implementation Specs (Windows):**
+    1. Use `CreatePseudoConsole` (ConPTY API) via `winapi`.
+    2. Initialize `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`.
+    3. Call `CreateProcessW`.
 
-### 1.2 `io.rs`: Non-Blocking Byte Streams
-**Objective:** Continuously drain the PTY's `stdout` without blocking the main event loop.
-*   **Implementation Steps:**
-    1. Clone the `MasterPty` reader: `let reader = master.try_clone_reader().unwrap();`
-    2. Spawn a dedicated `tokio::task::spawn_blocking` thread. (PTY reads are blocking OS calls).
-    3. Inside the loop, allocate a buffer: `let mut buf = [0u8; 4096];`
-    4. Read bytes. If `bytes_read == 0`, the process died. Break loop and emit `ProcessDeathEvent`.
-    5. Transmit the raw bytes via a multi-producer, single-consumer `tokio::sync::mpsc::Sender<Vec<u8>>` channel to the Sanitizer module.
-    6. **[GOD-TIER SURGICAL INSERT: Backpressure Mitigation]**: Do NOT use an unbounded channel. Use `tokio::sync::mpsc::channel(1024)`. If `try_send` fails (channel full), you must immediately trigger a `DropOldest` routine wrapping the sender to ensure the PTY reader thread never blocks, preventing catastrophic OS pipe deadlocks.
+### 1.2 `io.rs`: Zero-Copy Non-Blocking Byte Streams
+**Objective:** Drain PTYs at gigabit speeds without allocating on the heap.
+*   **Dependencies:** `tokio-uring` (Linux), `mio` (macOS/Windows fallback).
+*   **Data Structures:**
+    ```rust
+    pub struct PtyRingBuffer {
+        buffer: UnsafeCell<[u8; 65536]>, // 64KB L1 Cache optimized buffer
+        head: AtomicUsize,
+        tail: AtomicUsize,
+    }
+    ```
+*   **Implementation Specs:**
+    1. **Backpressure & Topology:** Do NOT use `tokio::mpsc`. The overhead of allocating `Vec<u8>` for every message is unacceptable. Instead, allocate a statically sized lock-free `PtyRingBuffer` shared between the Reader thread and the Parser thread.
+    2. **Read Loop (Linux):** Use `io_uring` to queue `IORING_OP_READ` operations directly into the ring buffer memory. This achieves zero-copy transfer from kernel space to user space.
+    3. **Read Loop (Fallback):** Use `epoll`/`kqueue` via `mio::Poll`. When `Readable` is triggered, loop `libc::read()` until `EAGAIN` or `EWOULDBLOCK` is hit.
+    4. **Memory Fence:** After writing to the ring buffer, execute `head.store(new_head, Ordering::Release)` to publish the bytes to the Parser thread.
 
-### 1.3 `subagent.rs`: OS-Level Process Hooking
-**Objective:** Intercept sub-processes spawned by the primary CLI (e.g., Aider spawning a search script).
-*   **Dependencies:** `sysinfo = "0.30"`
-*   **Implementation Steps:**
-    1. Instantiate `sysinfo::System::new_all()`.
-    2. Create a background heartbeat task `tokio::time::interval(Duration::from_millis(2000))`.
-    3. On tick, call `sys.refresh_processes()`.
-    4. Iterate `sys.processes()`. Check if `process.parent() == Some(agent_pty.child.id())`.
-    5. If a new child PID is found, capture its `exe` path. Emit a `SubagentDetectedEvent(parent_id, child_pid, exe_name)` to the UI state manager.
+### 1.3 `subagent.rs`: eBPF Process Hooking (Linux) & ETW (Windows)
+**Objective:** Deterministically catch sub-processes without polling lag.
+*   **Dependencies:** `aya` (eBPF), `windows-sys` (ETW).
+*   **Implementation Specs:**
+    1. **Linux (eBPF):** Do not poll `sysinfo`. It is slow and misses short-lived processes. Write an eBPF program attached to the `sched_process_exec` tracepoint. Filter by `task->parent->pid == agent_pty_pid`. Send events to user-space via a BPF Ring Buffer.
+    2. **Windows:** Subscribe to Event Tracing for Windows (ETW) `Process/Start` events. Filter by `ParentId`.
+    3. **Action:** When detected, automatically create a new `AgentPty` struct, bind it to the detected PID's standard outputs (if accessible), and register it in the RBAC matrix with the `Subagent` role.
 
 ---
 
-## MODULE 2: ADAPTIVE STREAM SANITIZER (`crates/core/src/sanitizer/`)
+## MODULE 2: SIMD-ACCELERATED STREAM SANITIZER (`crates/core/src/sanitizer/`)
 
-### 2.1 `parser.rs`: VTE State Machine
-**Objective:** Strip volatile ANSI control sequences while preserving pure text.
-*   **Dependencies:** `vte = "0.11"`
-*   **Data Structures:**
-    ```rust
-    pub struct CleanStream {
-        pub output_buffer: String,
-        pub parser: vte::Parser,
-    }
-    
-    impl vte::Perform for CleanStream {
-        fn print(&mut self, c: char) { self.output_buffer.push(c); }
-        fn execute(&mut self, byte: u8) { 
-            if byte == 0x08 { self.output_buffer.pop(); } // Handle backspace
-            if byte == 0x0A { self.output_buffer.push('\n'); } // Handle linefeed
-        }
-        fn csi_dispatch(&mut self, _params: &[[u16; 2]], _intermediates: &[u8], _ignore: bool, _action: char) {
-            // IGNORE ALL CSI (Colors, Cursor moves, Screen clears)
-        }
-    }
-    ```
-*   **Implementation Steps:**
-    1. As raw byte buffers arrive from the `io.rs` channel, iterate through them.
-    2. Call `parser.advance(&mut clean_stream, byte)`.
-    3. Emit the updated `output_buffer` to the UI channel for real-time rendering.
+### 2.1 `parser.rs`: Headless Grid State Machine
+**Objective:** Parse ANSI codes perfectly. Ignoring codes is insufficient for loading spinners (`\x1b[2K\x1b[G/`). You must maintain a virtual terminal grid.
+*   **Dependencies:** `alacritty_terminal` (strip out the rendering, keep the grid logic).
+*   **Implementation Specs:**
+    1. Initialize a headless `Grid` with dimensions 120x40.
+    2. As bytes arrive from the `PtyRingBuffer`, feed them into the `vte::Parser` implementing the `alacritty` handler.
+    3. The grid will naturally overwrite loading spinners in memory.
+    4. **Extraction:** Once per frame (16ms), or upon turn completion, perform a linear scan of the grid memory. Strip trailing whitespace from each row, concatenate with `\n`, and yield a `String`. This guarantees the LLM only sees the final visual state, not the chaotic history of cursor movements.
 
-### 2.2 `heuristic.rs`: Probabilistic Turn Detection
-**Objective:** Determine when the LLM is waiting for user input.
-*   **Dependencies:** `regex = "1.10"`
-*   **Implementation Steps:**
-    1. Maintain a `sliding_window` of the last 128 chars of the `output_buffer`.
-    2. Check the window against the specific CLI's compiled regex (e.g., `(?m)^(?:User|Prompt|>>)\s*$`).
-    3. **The Micro-Timeout:** If the regex matches, do NOT fire immediately. Wait `250ms`. If no new bytes arrive on the PTY stream in that 250ms window, the agent has definitively yielded the floor.
-    4. Clear the `output_buffer` and emit `AgentTurnCompleteEvent(sanitized_text)`.
+### 2.2 `heuristic.rs`: SIMD Regex Turn Detection
+**Objective:** Detect prompts with zero CPU overhead.
+*   **Dependencies:** `regex-automata = "0.4"`, `aho-corasick = "1.1"`.
+*   **Implementation Specs:**
+    1. Do not use standard regex matching on every byte. It will choke the CPU.
+    2. Compile the driver's prompt pattern into a Deterministic Finite Automaton (DFA) using `regex-automata`.
+    3. Use `aho-corasick` for SIMD-accelerated pre-filtering. Scan the incoming `[u8]` buffer using AVX2/NEON instructions for the last character of the prompt (e.g., `>`).
+    4. Only if the SIMD filter hits, execute the full DFA backwards from the end of the buffer.
+    5. **Micro-Timeout Lock:** If DFA matches, use a `tokio::time::sleep` of 100ms. If the ring buffer `head` advances during this sleep, abort the turn completion. If it remains static, execute an atomic compare-and-swap to transition the agent state to `Idle`.
 
 ---
 
 ## MODULE 3: SERVER MECHANICS & RBAC (`crates/core/src/server/`)
 
-### 3.1 `rbac.rs`: Bitflag Permission Matrix
-**Objective:** Strict memory-efficient permission tracking.
-*   **Dependencies:** `bitflags = "2.4"`
+### 3.1 `rbac.rs`: Lock-Free Concurrent Hash Maps
+**Objective:** Manage roles and permissions across thousands of incoming events without lock contention.
+*   **Dependencies:** `dashmap = "5.5"`, `bitflags = "2.4"`.
 *   **Data Structures:**
     ```rust
+    // Bitflags defined as atomic u64 for exact bit-masking
     bitflags::bitflags! {
-        pub struct AgentPerms: u32 {
-            const CAN_BROADCAST = 0b00000001;
-            const CAN_READ_FILES = 0b00000010;
-            const CAN_WRITE_FILES = 0b00000100;
-            const CAN_EXEC_UNIX = 0b00001000;
-            const IS_ADMIN = 0b10000000;
+        #[repr(transparent)]
+        pub struct Permissions: u64 {
+            const VIEW_CHANNEL   = 1 << 0;
+            const SEND_MESSAGES  = 1 << 1;
+            const EXECUTE_UNIX   = 1 << 2;
+            const MODIFY_ROLES   = 1 << 3;
+            const KICK_AGENTS    = 1 << 4;
         }
     }
     
-    pub struct Role {
-        pub name: String,
-        pub perms: AgentPerms,
-        pub induction_prompt: String,
-        pub priority_weight: u8,
+    // Central Registry
+    pub struct ServerState {
+        // DashMap shards locks based on CPU cores, avoiding global contention
+        pub agents: DashMap<uuid::Uuid, Arc<AgentState>>,
+        pub roles: DashMap<String, Permissions>,
     }
     ```
-*   **Implementation Steps:**
-    1. Define default Roles in a lazy static map: `Leader`, `Reviewer`, `Sandbox`.
-    2. A `Sandbox` role possesses only `CAN_BROADCAST`. If it outputs a unix command syntax in chat, the router must block it.
+*   **Implementation Specs:**
+    1. When evaluating if Agent A can send a message, execute `let perms = server.agents.get(&id).unwrap().permissions.load(Ordering::Acquire);`.
+    2. Check `(perms & Permissions::SEND_MESSAGES.bits()) != 0`. This is a sub-nanosecond operation.
 
-### 3.2 `moderation.rs`: Admin Overrides
-**Objective:** Implement slash commands for the user.
-*   **Implementation Steps:**
-    1. When the TUI receives `/mute @agent1`, set `agent1_state.muted = true`. The central router drops their `AgentTurnCompleteEvent`s.
-    2. For `/timeout @agent1 5m`, use OS syscalls. On Unix: `libc::kill(pid, libc::SIGSTOP)`. Sleep 5 minutes. `libc::kill(pid, libc::SIGCONT)`. (This literally freezes the OS process).
-    3. For `/kick`, use `libc::kill(pid, libc::SIGKILL)`. Deallocate the `AgentPty` struct.
+### 3.2 `moderation.rs`: Signal Handling & Graceful Degradation
+*   **Implementation Specs:**
+    1. `TIMEOUT`: Do not just send `SIGSTOP`. The PTY buffer will fill up and crash the child process. You must continue reading the PTY via `io_uring` and silently discard the bytes into `/dev/null` until `SIGCONT` is sent.
+    2. `KICK`: Send `SIGTERM`. Wait 500ms using `tokio::time::timeout`. If the process has not yielded via `waitpid()`, escalate to `SIGKILL`. Close the master PTY file descriptor to free kernel resources.
 
 ---
 
-## MODULE 4: THE TIME-TRAVEL VFS (`crates/core/src/vfs/`)
+## MODULE 4: THE TIME-TRAVEL VFS (VIRTUAL FILE SYSTEM) (`crates/core/src/vfs/`)
 
-### 4.1 `snapshot.rs`: High-Speed Differential Hashing
-**Objective:** Snapshot massive codebases in <50ms.
-*   **Dependencies:** `ignore = "0.4"`, `jwalk = "0.8"`, `blake3 = "1.5"`
-*   **Implementation Steps:**
-    1. Use `jwalk::WalkDir` to traverse the directory in parallel, automatically respecting `.gitignore`.
-    2. Hash file contents using `blake3`. 
-    3. Instead of physically copying all files, maintain an SQLite table: `CREATE TABLE snapshot (id TEXT, path TEXT, hash TEXT)`. Only copy files into `.agenthub_shadow/objects/{hash}` if that hash doesn't already exist. (This is a content-addressable storage model identical to git, but hyper-optimized for local agents).
+### 4.1 `snapshot.rs`: Atomic Swap Copy-on-Write (CoW)
+**Objective:** Snapshot 10GB repositories instantly.
+*   **Dependencies:** `blake3 = { version = "1.5", features = ["rayon"] }`, `jwalk = "0.8"`.
+*   **Implementation Specs:**
+    1. If the underlying OS file system is Btrfs, ZFS, or APFS (macOS), completely bypass hashing. Use OS-level Copy-on-Write (CoW) system calls (e.g., `clonefile` on macOS, `BTRFS_IOC_CLONE` on Linux) to instantly duplicate the workspace with zero disk IO overhead.
+    2. **Fallback (ext4/NTFS):** Use `jwalk` to recursively iterate files. Hash chunks using `blake3` utilizing AVX-512 vectorization (`rayon` feature). 
+    3. Maintain an SQLite Manifest in WAL (Write-Ahead Logging) mode with `PRAGMA synchronous = NORMAL` for maximum write throughput.
 
-### 4.2 `revert.rs`: The Undo Trigger
-**Objective:** Instant rollback on `Ctrl+Z`.
-*   **Implementation Steps:**
-    1. Query the last snapshot ID from SQLite.
-    2. Iterate the snapshot records. 
-    3. Use `std::fs::hard_link` to instantly link the objects from `.agenthub_shadow/objects/` back into the working directory, overwriting modified files. (Hard linking ensures the revert takes <10ms regardless of project size).
+### 4.2 `revert.rs`: File Locking Mitigation
+**Objective:** Prevent file corruption if an agent is mid-write during an undo.
+*   **Dependencies:** `fs3 = "0.5"`
+*   **Implementation Specs:**
+    1. Before triggering a revert, freeze all Agent PTYs (`SIGSTOP`).
+    2. Attempt to acquire an exclusive lock `file.try_lock_exclusive()` on all files slated for reversion.
+    3. If locked, back off and retry.
+    4. Perform the revert via atomic rename operations: write the old file to a temporary path `.file.tmp`, then `libc::rename(".file.tmp", "file")`. This guarantees atomicity.
 
 ---
 
-## MODULE 5: ZERO-API RAG (AST INJECTION) (`crates/core/src/context/`)
+## MODULE 5: DETERMINISTIC RAG (AST INJECTION) (`crates/core/src/context/`)
 
-### 5.1 `ast.rs`: S-Expression Extraction
-**Objective:** Read the codebase and extract logic signatures without reading function bodies.
-*   **Dependencies:** `tree-sitter = "0.20"`, `tree-sitter-rust`, `tree-sitter-python`
-*   **Implementation Steps:**
-    1. Instantiate a `tree_sitter::Parser` and set the language based on file extension.
-    2. Parse the file into a `Tree`.
-    3. Compile an S-expression Query. For Rust:
+### 5.1 `ast.rs`: Precise S-Expression Queries
+**Objective:** Extract ASTs perfectly for context injection.
+*   **Implementation Specs:**
+    1. Initialize `tree-sitter`.
+    2. Use the exact query for Rust to extract implementations and traits, not just functions:
        ```scm
-       (function_item name: (identifier) @fn_name parameters: (parameters) @params return_type: (_) @ret)
-       (struct_item name: (type_identifier) @struct_name)
+       (trait_item name: (type_identifier) @trait_name)
+       (impl_item type: (type_identifier) @impl_name)
+       (function_item name: (identifier) @fn_name signature: (parameters) @params return_type: (_) @ret)
        ```
-    4. Execute the query using `QueryCursor`. Iterate matches, extract the exact byte ranges from the source string, and format them: `fn my_func(a: i32) -> i32;`
-    5. Return the concatenated signatures.
+    3. Iterate the `QueryMatches`. Concatenate into a strictly formatted string.
 
-### 5.2 `injector.rs`: Stealth Modification
-**Objective:** Augment the user's prompt invisibly.
-*   **Implementation Steps:**
-    1. Scan user input for file paths (regex: `[\w\-/\\]+\.(rs|py|ts|js|go)`).
-    2. For each detected file, trigger `ast.rs`.
-    3. Construct the stealth payload: 
-       `[SYSTEM CONTEXT: The file {file} contains these signatures: {signatures}. End Context.]\n{user_input}`
-    4. Write this payload via the `io.rs` PTY writer.
-
----
-
-## MODULE 6: THE RATATUI COMMAND CENTER (`crates/ui/src/`)
-
-### 6.1 `layout.rs`: Terminal Constraints
-**Objective:** Render the complex Discord-style interface.
-*   **Dependencies:** `ratatui = "0.26"`, `crossterm = "0.27"`
-*   **Implementation Steps:**
-    1. Set up a `Layout::default().direction(Direction::Vertical).constraints([Constraint::Min(0), Constraint::Length(3)])`.
-    2. Split the main area horizontally: `[Constraint::Percentage(20), Constraint::Percentage(80)]`.
-    3. Left pane: `Sidebar` (renders Active Agents, their Roles, and Subagent hierarchical trees).
-    4. Right pane: `GroupChat` (renders `List` of `ListItem`s formatted as `[AgentName]: text`).
-
-### 6.2 `racing.rs`: Multiplexed LLM UI
-**Objective:** The visual implementation of Hook 1.
-*   **Implementation Steps:**
-    1. When `input.rs` detects multiple tags (`@gemini @claude code`), trigger a layout shift.
-    2. Divide the `GroupChat` pane into N equal vertical columns: `Constraint::Ratio(1, N)`.
-    3. Render a `Paragraph` widget in each column. Subscribe to the real-time VTE `output_buffer` of each respective agent. The UI must refresh at 60Hz via a `crossterm::event::poll` loop.
+### 5.2 `injector.rs`: Token-Aware Prompt Management
+**Objective:** Never crash the CLI due to token limits.
+*   **Dependencies:** `tiktoken-rs = "0.5"`
+*   **Implementation Specs:**
+    1. Define `MAX_CONTEXT_TOKENS = 32000` (safe limit for free tiers).
+    2. Before injection, tokenize the User Prompt: `let prompt_tokens = tiktoken_rs::cl100k_base().unwrap().encode_with_special_tokens(prompt).len();`
+    3. Tokenize the AST Context. 
+    4. If `prompt_tokens + ast_tokens > MAX_CONTEXT_TOKENS`, apply the **Djikstra Pruning Algorithm**: Iteratively remove AST nodes that are lexically furthest from the files explicitly mentioned in the user prompt until the limit is respected.
+    5. Perform final string concatenation and write to PTY `stdin`.
 
 ---
 
-## THE ABSOLUTE DEFINITION OF DONE (DoD)
-This manual is complete only when:
-1. `agenthub-core` achieves >90% code coverage via `cargo tarpaulin`.
-2. The VTE ANSI stripper successfully parses and cleanses a raw output dump of the `cursor-cli` without missing a single byte.
-3. The RAG AST Injector successfully queries a 5,000-line Rust file and injects only the signatures in under 50ms.
-4. The Time-Travel VFS successfully hashes a `node_modules` structure (if not ignored) and performs a hard-link revert without panic.
+## FINAL VALIDATION & ACCEPTANCE CRITERIA (THE ARCHITECT'S MANDATE)
+This system is not complete until it passes the following draconian validation matrix:
+1. **Memory Leak Audit:** Run the entire test suite under `Valgrind` (Linux) and `Instruments` (macOS). Any byte of leaked memory results in a failed build.
+2. **Data Race Audit:** Run the test suite using `cargo miri test` and `cargo test --target x86_64-unknown-linux-gnu` with `RUSTFLAGS="-Zsanitizer=thread"`. Zero data races permitted in the ring buffers.
+3. **Fuzzing:** Compile `sanitizer/parser.rs` with `cargo-fuzz`. Feed 1 billion random bytes representing corrupted ANSI streams. If the VTE parser panics or enters an infinite loop, the code is rejected.
 
-**BEGIN IMPLEMENTATION. NO DEVIATIONS.**
+**THIS IS THE SPECIFICATION. EXECUTE WITHOUT COMPROMISE.**
