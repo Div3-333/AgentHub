@@ -315,5 +315,140 @@ This document is the exhaustive, component-by-component, struct-by-struct archit
 - [ ] `contributing.md`: PR guidelines, commit message formatting.
 - [ ] `mcp_spec.md`: Internal documentation on how AgentHub routes MCP calls.
 
-## Definition of Done (DoD)
-The product is declared "World-Class" and ready for public launch **only** when every single checkbox from Phase 1.1 to 10.2 is verified, code-reviewed, and merged to the `main` branch. No technical debt will be carried into v1.0.
+## Phase 11: Advanced Telemetry & Observability (`agenthub-telemetry`)
+
+### 11.1 OpenTelemetry Integration
+- [ ] Initialize `opentelemetry-rs` with `tracing` subscriber layer.
+- [ ] Implement `OTLP` exporter for distributed tracing to Jaeger/Zipkin.
+- [ ] Add Prometheus metrics exporter (`/metrics` endpoint).
+- [ ] **Span Hierarchy Requirements:**
+  - [ ] `PipelineTrace` (Root Span)
+    - [ ] `NodeExecution` (Child Span)
+      - [ ] `LlmInference` (Child Span - capturing Token counts, Time To First Token).
+      - [ ] `McpToolCall` (Child Span - capturing RPC latency, Payload size).
+
+### 11.2 Real-Time Profiling & Diagnostics
+- [ ] Implement memory profiling using `jemalloc` or `mimalloc` stats.
+- [ ] Expose `tokio::console` for real-time async task debugging.
+- [ ] Log payload size tracking (fail-safes for out-of-memory panics on 1GB+ context outputs).
+- [ ] Implement `tokio::metrics` to monitor thread-pool saturation and queue depth.
+
+## Phase 12: Ecosystem & WASM Plugin Sandboxing (`agenthub-plugin`)
+
+### 12.1 The Wasmtime Host Environment
+- [ ] `struct PluginHost { engine: wasmtime::Engine, linker: wasmtime::Linker<PluginState> }`
+- [ ] Implement WASI (WebAssembly System Interface) imports using `wasmtime-wasi`.
+- [ ] **Strict Sandboxing Rules:**
+  - [ ] `WasiCtxBuilder`: Deny network access by default.
+  - [ ] `WasiCtxBuilder`: Deny directory access except to specific isolated tmp folders.
+  - [ ] Instruction counting: Limit plugins to `100,000,000` cycles to prevent infinite loops.
+
+### 12.2 Plugin ABI (Application Binary Interface)
+- [ ] Define `agenthub-plugin-sdk` crate for authors.
+- [ ] `#[no_mangle] pub extern "C" fn process_node(input_ptr: *const u8) -> *mut u8`
+- [ ] Shared memory allocators to pass JSON DAG states into the WASM instance.
+- [ ] Dynamic loading of `.wasm` files from `~/.agenthub/plugins/`.
+
+## Phase 13: Advanced Memory & Context Management
+
+### 13.1 Context Window Sliding Algorithms
+- [ ] Implement `ContextManager` struct for LLM inputs exceeding 128k/200k limits.
+- [ ] `fn apply_sliding_window(&mut self, strategy: SlidingStrategy)`
+- [ ] **Strategies:**
+  - [ ] `TruncateOldest`: Drop earliest messages but retain System Prompt.
+  - [ ] `SemanticCompression`: Use LLM to summarize chunks of history into a compressed `State` block.
+  - [ ] `RabinKarpFingerprinting`: Deduplicate overlapping text blocks to save token space.
+
+### 13.2 KV Cache & Prompt Caching
+- [ ] Integrate with Anthropic's "Prompt Caching" feature (`ephemeral` tags).
+- [ ] Track cache hit/miss rates in telemetry layer.
+- [ ] Disk-backed cache for repeated tool calls using `sled` embedded KV store.
+
+## Phase 14: Network, Cluster & Distributed Execution
+
+### 14.1 gRPC Remote Daemon (Enterprise Clustering)
+- [ ] Introduce `agenthub-proto` crate utilizing `tonic` and `prost`.
+- [ ] Define `AgentHubExecution.proto` to allow execution of pipelines across a remote cluster.
+- [ ] `rpc ExecuteGraph(GraphRequest) returns (stream GraphEvent);`
+- [ ] `rpc StreamNodeLogs(NodeLogRequest) returns (stream NodeLogStream);`
+
+### 14.2 mTLS & Zero-Trust Auth
+- [ ] Generate self-signed CA for local cluster setups.
+- [ ] Implement Mutual TLS (mTLS) for all inter-node communication.
+- [ ] Role-Based Access Control (RBAC) middleware for the Axum/Tonic servers.
+
+## Phase 15: Deep Frontend Architecture (Tauri Studio)
+
+### 15.1 Web Worker Offloading
+- [ ] Move heavy JSON parsing of massive pipeline histories to a dedicated Web Worker (`logParser.worker.ts`).
+- [ ] Implement `SharedArrayBuffer` for zero-copy memory transfers between main thread and worker.
+
+### 15.2 WebGL/Canvas Graph Rendering
+- [ ] Migrate `reactflow` to a custom WebGL renderer (e.g., using `pixi.js` or `three.js`) if node count exceeds 1,000 to maintain 60FPS.
+- [ ] Implement spatial hashing/quadtrees for efficient edge-hover detection in large DAGs.
+
+### 15.3 Global Shortcuts & Command Palette
+- [ ] Implement `Cmd+K` global palette using `cmdk` library.
+- [ ] Register system-wide Tauri hotkeys (e.g., `Cmd+Shift+A` to bring AgentHub to the foreground).
+
+## Phase 16: Chaos Engineering & Extreme Reliability
+
+### 16.1 Fault Injection
+- [ ] Create `agenthub-chaos` binary for simulated destruction.
+- [ ] **Scenarios to write:**
+  - [ ] `simulate_tcp_drops`: Randomly drop TCP connections during LLM streaming.
+  - [ ] `simulate_mcp_crash`: Send `SIGKILL` to an MCP server mid-execution.
+  - [ ] `simulate_db_lock`: Lock the SQLite DB to test WAL mode timeouts.
+
+### 16.2 Automatic Recovery Vectors
+- [ ] Write logic: If an MCP server crashes, AgentHub automatically respawns the child process and replays the RPC call.
+- [ ] Write logic: If API returns 429 (Rate Limit), queue the node state, apply exponential backoff (up to 5 mins), and resume.
+
+## Phase 17: Hardware Acceleration & OS Integration
+
+### 17.1 GPU Backend Detection
+- [ ] Implement `gpu-allocator` crate.
+- [ ] Dynamic feature flagging at runtime to utilize CUDA (Nvidia), Metal (Apple), or Vulkan (AMD) for RAG embeddings.
+- [ ] Graceful fallback to `cpu` if VRAM is exhausted.
+
+### 17.2 OS Native Features
+- [ ] Windows: Register AgentHub as a COM server to integrate with Windows File Explorer context menus ("Run Agent Pipeline here").
+- [ ] macOS: Implement AppleScript hooks and integrate with Spotlight Search.
+- [ ] Linux: Add DBus interface for system tray integration.
+
+## Phase 18: Internationalization (i18n) & Accessibility (a11y)
+
+### 18.1 Frontend Accessibility Standards
+- [ ] Audit entire Tauri app against WCAG 2.1 AA standards.
+- [ ] Ensure full keyboard navigability within the React Flow visual editor (tabbing between nodes, enter to edit).
+- [ ] Ensure all dynamic updates (log streams) are announced to screen readers via `aria-live` regions.
+
+### 18.2 Localization Architecture
+- [ ] Integrate `i18next` for React.
+- [ ] Extract all hardcoded strings into `en-US.json`.
+- [ ] Prepare localized bundles for `es-ES`, `zh-CN`, `ja-CN`, `fr-FR`.
+- [ ] Allow UI language switching on the fly without application restart.
+
+## Phase 19: Regulatory Compliance & Audit Standards
+
+### 19.1 GDPR & CCPA Compliance
+- [ ] Implement "Right to be Forgotten" endpoint in Daemon: Hard delete of all related SQLite rows and Vector DB embeddings.
+- [ ] Add explicit opt-in flags in `config.yaml` for Telemetry (default: `false`).
+- [ ] Implement data export utility (JSON dump of all execution histories) for user data portability requests.
+
+### 19.2 SOC2 Readiness
+- [ ] Ensure the SQLite Audit log uses cryptographically signed rows (hash chaining) to prevent manual tampering of logs.
+- [ ] Add mandatory session timeouts and biometric re-authentication prompts for accessing the "Secrets" UI panel in Tauri.
+
+## Phase 20: Machine Learning Operations (MLOps) & Finetuning
+
+### 20.1 Local Finetuning Data Generation
+- [ ] Implement a node type `DataCollectionNode` designed specifically to format successful pipeline outputs into JSONL pairs.
+- [ ] Automatic syncing of high-quality execution traces to a local `dataset/` directory.
+
+### 20.2 Model Distillation Workflows
+- [ ] Add support for translating complex Opus/GPT-4 DAGs into a single prompt/response pair to train a smaller local model (e.g., Llama 3 8B).
+- [ ] Expose an export format compatible with Unsloth or Axolotl for rapid developer-side finetuning.
+
+## Definition of Done (Ultimate DoD)
+The product is declared "World-Class" and ready for public launch **only** when every single checkbox from Phase 1.1 to 20.2 is verified, code-reviewed, tested with Chaos Engineering parameters, and merged to the `main` branch. No technical debt will be carried into v1.0.
