@@ -34,14 +34,19 @@ This roadmap is an exhaustive, granular engineering plan to build AgentHub into 
     - [ ] Allow multiple tags (`@gemini @claude code a button`).
     - [ ] Route the single string to multiple PTYs simultaneously and manage concurrent UI updates.
 
-## Phase 4: Autonomous Pipelines & The "Frankenstein" Router
+## Phase 4: Autonomous Pipelines, Open Floors & The "Frankenstein" Router
 - [ ] **The Pipeline Parser:**
     - [ ] Implement a custom mini-parser for the pipe `|` syntax in the chat box.
 - [ ] **Agent-to-Agent Handoffs:**
     - [ ] Automatically capture the `MessageComplete` event from Agent A, wrap the output in a system string, and inject it to Agent B.
+- [ ] **"Open Floor" Dynamics (Unconstrained N-Way Chat):**
+    - [ ] **True Concurrency:** Maintain active listening loops on *all* agent PTYs simultaneously.
+    - [ ] **Broadcast Injector:** When any entity (User or Agent X) speaks, their sanitized text is instantly broadcasted to the `stdin` of all other active agents with the prefix `[Agent X says]: ...`.
+    - [ ] **Chaos Heuristics:** Implement random backoff timers so agents don't all attempt to reply to a broadcast at the exact same millisecond.
 - [ ] **Unix Integration (Hook Feature 3):**
     - [ ] Support `> command` syntax to run standard OS commands mid-pipeline.
     - [ ] Capture OS `stderr` and route it back to the agent PTY automatically for self-healing code loops.
+
 
 ## Phase 5: The Time-Travel Workspace (Safety Engine)
 - [ ] **Shadow VFS Implementation (Hook Feature 2):**
