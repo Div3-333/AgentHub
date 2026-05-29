@@ -49,20 +49,26 @@ This roadmap is an exhaustive, granular engineering plan to build AgentHub into 
 
 
 ## Phase 4.5: The Discord Server Mechanics (RBAC & Moderation)
+- [ ] **Workspace Modes UI:**
+    - [ ] `Direct Message (DM) Mode`: Streamlined 1-on-1 UI for quick single-agent tasks.
+    - [ ] `Group Chat Mode`: Unconstrained "Open Floor" UI with minimal rules for rapid brainstorming.
+    - [ ] `Server Mode`: Full hierarchical UI with channels, structured roles, and strict moderation limits.
 - [ ] **Agent Induction Protocol (System Prompting):**
     - [ ] Create a hidden initialization phase. When an agent is spawned, instantly push a massive context prompt into its `stdin` explaining AgentHub, its specific role, and how to read `[Agent X says]` prefixes.
     - [ ] Wait for the agent to acknowledge the rules before marking it "Online" in the UI.
 - [ ] **Role-Based Access Control (RBAC):**
     - [ ] Define default roles: `Leader` (can override others), `Builder` (writes code), `Reviewer` (critiques), `Auditor` (security checks).
-    - [ ] Build a JSON schema to allow users to create Custom Roles with custom induction prompts.
+    - [ ] Implement UI to dynamically Add/Remove Custom Roles and assign specific induction prompts to them.
+    - [ ] Implement UI slash commands to Promote/Demote agents dynamically (e.g., `/promote @gemini-1 to Leader`).
 - [ ] **Server Moderation Commands:**
     - [ ] `/mute @agent`: Agent stays active but its output is hidden from the group chat.
     - [ ] `/deafen @agent`: Agent stays active but stops receiving broadcasts from other agents.
     - [ ] `/kick @agent`: Forcefully sends `SIGKILL` to the specific agent's PTY.
     - [ ] `/timeout @agent 5m`: Temporarily suspends the agent's PTY process.
-- [ ] **Multi-Instance Scaling:**
+- [ ] **Multi-Instance Scaling & Subagent Capture:**
     - [ ] Update the PTY Manager to spawn unique clones. E.g., spawn `/usr/bin/gemini-cli` three times, assigning them internal tags `@gemini-1`, `@gemini-2`, `@gemini-3`.
     - [ ] Implement graceful fallback: If an agent locks up due to IP limits (e.g., trying to run 5 Cursor CLIs), catch the error and alert the user.
+    - [ ] **Subagent Capture Protocol:** Hook into the OS process tree. If an agent (like Aider) spawns a child subagent process, intercept its I/O, wrap it in a new PTY, and pull it into the Server UI as a distinct, interactable user (e.g., `@aider-subagent-1`).
 
 ## Phase 5: The Time-Travel Workspace (Safety Engine)
 - [ ] **Shadow VFS Implementation (Hook Feature 2):**

@@ -11,11 +11,16 @@ But AgentHub is not just a chat wrapper. It introduces a paradigm shift: **The D
 
 To attract a massive audience, AgentHub provides features that are impossible to achieve with standard web interfaces or single CLIs:
 
-### Hook 1: The "Discord Server" Mechanics
-AgentHub provides a deeply hierarchical, role-based chat environment.
-*   **The Feature:** Complete Admin Control over agents. You can **Mute**, **Deafen** (stop them from receiving broadcasts), **Kick**, or **Time-Out** any agent. 
-*   **Role-Based Access Control (RBAC):** Promote agents to roles like `Leader`, `Reviewer`, or `Auditor`. Custom roles dictate how much weight their output has in the chat, or if they are allowed to trigger terminal commands.
-*   **Multi-Instance Spawning:** Launch `@gemini-1`, `@gemini-2`, and `@claude` simultaneously to populate your server with as many "users" as your local RAM can handle.
+### Hook 1: The "Discord Server" Mechanics & Workspace Modes
+AgentHub provides a deeply hierarchical, role-based chat environment, scalable from quick chats to massive operations.
+*   **Workspace Modes:**
+    *   **Direct Message (DM):** 1-on-1 private PTY session with a single agent.
+    *   **Group Chat:** A lightweight, unconstrained "Open Floor" where a small handful of agents converse freely.
+    *   **Server Mode:** A heavy-duty, structured hierarchy with defined roles, channels, and strict moderation limits.
+*   **The Admin Feature:** Complete Admin Control over agents. You can **Mute**, **Deafen**, **Kick**, or **Time-Out** any agent. 
+*   **Role-Based Access Control (RBAC):** Promote/demote agents to roles like `Leader`, `Reviewer`, or `Auditor`. Create and delete custom roles on the fly. Custom roles dictate how much weight an agent's output has.
+*   **Multi-Instance Spawning:** Launch `@gemini-1`, `@gemini-2`, and `@claude` simultaneously.
+*   **Subagent Capture Protocol:** If an underlying CLI tool (e.g., Aider) attempts to spawn its own internal subagent, AgentHub detects the child process, intercepts it, and registers it as a new distinct user in the Server, bringing hidden subagents into the visible group chat.
 
 ### Hook 2: "The Grand Induction" (System Prompting)
 Free-tier CLIs don't know they are in a group chat. AgentHub fixes this.
@@ -37,7 +42,7 @@ Agents shouldn't just talk to agents. They should talk to your compiler.
 *   **The Feature:** Seamlessly pipe AI outputs into traditional Unix tools and feed the errors back to the AI.
 *   **The UX:** `@gemini build the auth route | > cargo check | @gemini fix the compiler errors`. AgentHub automates the entire compile-and-fix loop locally.
 
-### Hook 4: Zero-Config "Auto-Context" (RAG without APIs)
+### Hook 6: Zero-Config "Auto-Context" (RAG without APIs)
 Free CLIs lack context of your whole repository. 
 *   **The Feature:** AgentHub parses your local repository using Tree-Sitter to build an AST (Abstract Syntax Tree). 
 *   **The UX:** You ask `@gemini update the database schema`. AgentHub automatically finds `schema.rs`, minifies the text, and stealthily concatenates it to your prompt *before* injecting it into Gemini's invisible terminal. You get full-repo awareness for free.
