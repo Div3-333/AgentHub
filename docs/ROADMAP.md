@@ -1,61 +1,71 @@
-# AgentHub: The World-Class Multi-Agent Orchestrator Blueprint
+# Zero-Debt Execution Plan & Product Roadmap (V2: Enterprise Pivot)
 
-This document defines the transition from a technical tool to a **world-class product**. It is a high-fidelity blueprint for building a market-leading orchestration platform.
+This is the exhaustive, hyper-granular master checklist for the new Daemon+Tauri+MCP architecture. Every checkbox represents a mandatory unit of work required to ship a world-class product.
 
-## Phase 1: The Core "Engine" (Foundations)
-- [x] **Vision & Architecture:** (COMPLETE)
-- [x] **Project Scaffolding:** (COMPLETE)
-- [ ] **Agent Abstraction (Universal Adapter)**
-    - [ ] `trait AgentAdapter`: High-performance async interface for any CLI.
-    - [ ] **Adaptive Stream Sanitizer:** Real-time ANSI removal + structured data extraction (JSON sniffing within logs).
-    - [ ] **Process Isolation:** Use cgroups (Linux) or Jobs (Windows) to strictly limit resources per agent.
-- [ ] **Zero-Latency Message Bus**
-    - [ ] **Lock-Free Concurrency:** Use `crossbeam` or similar for microsecond-latency message passing.
-    - [ ] **Global State Sync:** Atomic synchronization between the TUI, the Message Bus, and the Storage Engine.
+## Phase 1: The Core Daemon & DAG Engine (Foundation)
+- [ ] **Daemon Scaffolding**
+    - [ ] Initialize workspace: `agenthub-core` (Rust library) and `agenthub-daemon` (Binary).
+    - [ ] Setup `tokio` runtime, `tracing` for structured logging, and `clap` for daemon CLI flags.
+- [ ] **The DAG Execution Engine**
+    - [ ] Define `Node` and `Edge` traits/structs.
+    - [ ] Implement `GraphRunner`: Topological sort of nodes to determine execution order.
+    - [ ] Implement concurrency: Execute independent nodes in parallel using `tokio::spawn`.
+    - [ ] Implement State Machine: Nodes must track state (`Pending`, `Running`, `Completed`, `Failed`).
+- [ ] **Provider API Adapters**
+    - [ ] Implement `LLMProvider` trait.
+    - [ ] Build OpenAI adapter (streaming and standard).
+    - [ ] Build Anthropic adapter (streaming and standard).
+    - [ ] Build local adapter (Ollama/Llama.cpp integration).
 
-## Phase 2: The Intelligence Layer (The "World-Class" Difference)
-- [ ] **Local Context Awareness (Project-Aware Agents)**
-    - [ ] **Codebase Indexing:** Built-in RAG (Retrieval-Augmented Generation) using a local vector store (e.g., `qdrant` or `lance`) so agents can "see" the entire repo.
-    - [ ] **Semantic History Search:** Find previous solutions or discussions using embeddings, not just keywords.
-- [ ] **Multi-Agent Governance**
-    - [ ] **Consensus Mechanisms:** Ability to run 3 agents on one task and have a "Judge" agent pick or synthesize the best result.
-    - [ ] **Adversarial Prompting:** Automatic "Red Teaming" where one agent attempts to find bugs in another's output.
-- [ ] **Memory Persistence**
-    - [ ] **Hierarchical Memory:** Short-term (buffer), Mid-term (session), and Long-term (cross-project) memory management.
+## Phase 2: The Model Context Protocol (MCP) Integration
+- [ ] **MCP Client Implementation**
+    - [ ] Implement MCP JSON-RPC over `stdio` transport.
+    - [ ] Implement MCP JSON-RPC over `SSE` (Server-Sent Events) transport.
+- [ ] **Tool Discovery & Binding**
+    - [ ] Logic to query an MCP Server for `tools/list`.
+    - [ ] Dynamic schema translation: Convert MCP JSON schemas into OpenAI/Anthropic function calling formats.
+- [ ] **Execution Routing**
+    - [ ] Capture tool call requests from the LLM adapter.
+    - [ ] Route the call to the correct MCP Server, await response, and inject back into the LLM context.
 
-## Phase 3: Ecosystem & Extensibility (The Platform Play)
-- [ ] **Plugin SDK & Marketplace**
-    - [ ] **WASM-Based Plugins:** Allow users to write custom adapters or UI widgets in any language, compiled to WASM for safe execution.
-    - [ ] **AgentHub "Teams" Registry:** A shareable format (.yaml) for complex multi-agent team configurations (e.g., "The Fullstack Team", "The Security Audit Team").
-- [ ] **Cross-Tool Integration**
-    - [ ] **LSP Support:** Act as a Language Server so AgentHub can "speak" to VS Code/Neovim directly.
-    - [ ] **Webhooks:** Trigger agent actions from external events (GitHub Actions, Jira, etc.).
+## Phase 3: The Intelligence & Context Layer (Local RAG)
+- [ ] **Vector Database Embedded**
+    - [ ] Integrate `lancedb` or `qdrant` as a local, embedded database.
+- [ ] **Workspace Indexer**
+    - [ ] Build a background file watcher (`notify` crate) to detect file changes.
+    - [ ] Implement text chunking and AST parsing (using `tree-sitter`) for code chunks.
+    - [ ] Generate local embeddings using `ort` (ONNX) and an optimized model like `all-MiniLM-L6-v2`.
+- [ ] **Semantic Context Node**
+    - [ ] Create a specialized DAG Node type: `RetrieveContextNode` that queries the Vector DB based on upstream inputs.
 
-## Phase 4: High-End UX/DX (Developer Delight)
-- [ ] **The "Beautiful" TUI**
-    - [ ] **Custom Rendering Engine:** Support for images in the terminal (via Sixel/Kitty protocol) and rich Markdown formatting.
-    - [ ] **Theming Engine:** Dynamic color schemes that adapt to the user's system theme.
-- [ ] **Input Fluency**
-    - [ ] **Intelligent Autocomplete:** Context-aware completion based on the current file being edited.
-    - [ ] **Command Pallette:** `Ctrl-P` style quick access to all orchestrator features.
-- [ ] **Observability & Debugging**
-    - [ ] **"Time Travel" Debugging:** Scrub through the message history and see the exact state of every agent at that timestamp.
+## Phase 4: The Tauri Rich Client (The Studio)
+- [ ] **Tauri Scaffolding**
+    - [ ] Initialize `create-tauri-app` with React, TypeScript, and TailwindCSS.
+    - [ ] Configure `tauri.conf.json` for strict security and IPC permissions.
+- [ ] **The Pipeline Builder (UI)**
+    - [ ] Integrate `reactflow` for a node-based visual drag-and-drop editor.
+    - [ ] Implement Node configuration sidebars (select model, edit system prompts).
+    - [ ] Serialize visual graph to the AgentHub JSON Pipeline Schema.
+- [ ] **The Execution Dashboard (UI)**
+    - [ ] Real-time execution visualizer (highlighting active nodes in the graph).
+    - [ ] Streaming log view (CI/CD style terminal output).
+    - [ ] Rich Markdown rendering for final outputs (using `react-markdown` and `prismjs` for syntax).
 
-## Phase 5: Reliability & Security (Enterprise Fortress)
-- [ ] **Bulletproof Self-Healing**
-    - [ ] **Zero-Downtime Hot Reload:** Update agent configurations or plugin logic without restarting the main orchestrator.
-    - [ ] **Network Sandbox:** (Optional) Intercept and audit network calls made by agents to prevent data exfiltration.
-- [ ] **Compliance & Trust**
-    - [ ] **PII Masking:** Automatic detection and masking of Personally Identifiable Information before it hits logs.
-    - [ ] **SOC2/ISO Ready Logs:** Immutable audit trails of all agent-human interactions.
+## Phase 5: Enterprise Features & Polish
+- [ ] **Time-Travel Debugging**
+    - [ ] Implement a SQLite event store capturing every state delta.
+    - [ ] UI slider to step backwards through the DAG execution history to see exact prompts/responses at any node.
+- [ ] **Secret Management**
+    - [ ] Integrate `keyring` crate to store Provider API keys securely in the OS vault.
+- [ ] **Graceful Degradation & Resilience**
+    - [ ] Automatic retry logic with exponential backoff for rate-limited API calls (429 errors).
+    - [ ] Fallback routing (e.g., if Opus fails, fallback to Sonnet).
 
-## Phase 6: Strategic Launch & Scale
-- [ ] **Binary Excellence**
-    - [ ] **Deterministic Builds:** Ensure the binary is bit-for-bit identical regardless of where it is built.
-    - [ ] **EV Signing & Notarization:** Zero-friction installation on Windows and macOS.
-- [ ] **User Onboarding & Growth**
-    - [ ] **`agenthub init`:** An interactive walkthrough that sets up the user's first "Agent Team" in under 60 seconds.
-    - [ ] **Built-in Waitlist/Referral CLI:** Viral growth loops built directly into the terminal experience.
-- [ ] **Documentation & Community**
-    - [ ] **The "Book of AgentHub":** A world-class guide covering everything from basic usage to advanced multi-agent theory.
-    - [ ] **Open Source Governance:** Clear paths for community contribution and plugin development.
+## Phase 6: Distribution & Ecosystem
+- [ ] **Pipeline Registry**
+    - [ ] Build a public GitHub repository of official Pipeline YAML files.
+    - [ ] In-app "Marketplace" browser to 1-click install standard pipelines.
+- [ ] **Binary Packaging**
+    - [ ] GitHub Actions matrix for Windows `.msi`/`.exe`, macOS `.dmg` (Universal), Linux `.AppImage`/`.deb`.
+    - [ ] macOS App Notarization pipeline.
+    - [ ] Windows EV Code Signing pipeline.
