@@ -1,0 +1,16 @@
+{
+  "name": "claude",
+  "display_name": "Claude Code",
+  "executable": "claude",
+  "args": [],
+  "env": { "NO_COLOR": "1", "TERM": "dumb" },
+  "prompt_regex": "^\\?\\s*$",
+  "silence_timeout_ms": 8000,
+  "init_sequence": [],
+  "rate_limit_patterns": ["rate limit", "overloaded", "529", "429"],
+  "auto_reply_patterns": {
+    "Continue\\? \\(Y/n\\)": "Y\n"
+  },
+  "supports_multi_instance": true,
+  "max_instances": 0
+}

@@ -1,1 +1,17 @@
-/target
+# Rust / Cargo
+/target/
+
+# AgentHub runtime artifacts
+.agenthub_shadow/
+*.db
+
+# Secrets and local env
+.env
+.env.*
+
+# OS / editor (optional hygiene)
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

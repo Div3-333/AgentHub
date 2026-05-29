@@ -1,0 +1,17 @@
+{
+  "name": "gemini",
+  "display_name": "Gemini CLI",
+  "executable": "gemini",
+  "args": [],
+  "env": { "NO_COLOR": "1", "TERM": "dumb" },
+  "prompt_regex": "^>\\s*$",
+  "silence_timeout_ms": 5000,
+  "init_sequence": [],
+  "rate_limit_patterns": ["rate limit", "quota exceeded", "429"],
+  "auto_reply_patterns": {
+    "Do you want to continue\\? \\[Y/n\\]": "Y\n",
+    "Press Enter to continue": "\n"
+  },
+  "supports_multi_instance": true,
+  "max_instances": 0
+}

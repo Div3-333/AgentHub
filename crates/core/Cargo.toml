@@ -2,20 +2,111 @@
 name = "agenthub-core"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+autotests = false
+
+[features]
+default = []
+full = ["vfs-tests", "server-tests"]
+# Workspace modes + RBAC unit tests: `cargo test -p agenthub-core --no-default-features --features server-tests`
+# Full Phase 6 integration: `cargo test -p agenthub-core --features full rbac_moderation`
+server-tests = ["bus-tests"]
+# Compile vfs + db + config + bus for `cargo test -p agenthub-core --no-default-features --features vfs-tests vfs::snapshot`
+vfs-tests = []
+# Compile db + config only for `cargo test -p agenthub-core --no-default-features --features db-tests db::`
+db-tests = []
+# Part 4 config only: `cargo test -p agenthub-core --no-default-features --features config-tests config`
+config-tests = []
+# Compile context indexer/injector for `cargo test -p agenthub-core context::indexer`
+context-tests = []
+# BusEvent types (§7.1): `cargo test -p agenthub-core bus:: --no-default-features --features bus-tests`
+# §7 bus router + PTY mocks; enables `agents` map without full sanitizer/pipeline stack.
+bus-tests = []
+# Linux eBPF subagent backend (optional; polling is the default).
+ebpf = []
+
+[[test]]
+name = "bus_routing"
+required-features = ["bus-tests"]
+
+[[test]]
+name = "vfs_snapshot_revert"
+required-features = ["vfs-tests"]
+
+[[test]]
+name = "stream_sanitizer"
+required-features = ["full"]
+
+[[test]]
+name = "pipeline_frankenstein"
+required-features = ["full"]
+
+[[test]]
+name = "pty_lifecycle"
+required-features = ["full"]
+
+[[test]]
+name = "rbac_moderation"
+required-features = ["full"]
+
+# RBAC + ServerState always compile; integration tests need `full`.
+# Run: cargo test -p agenthub-core server::rbac
 
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 crossbeam = { workspace = true }
+crossbeam-queue = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
-async-trait = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+dirs = { workspace = true }
 sqlx = { workspace = true }
-petgraph = { workspace = true }
-tokio-stream = { workspace = true }
-futures = { workspace = true }
+portable-pty = { workspace = true }
+regex = { workspace = true }
+bitflags = { workspace = true, features = ["serde"] }
+ignore = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-rust = { workspace = true }
+tree-sitter-python = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+tree-sitter-javascript = { workspace = true }
+tree-sitter-go = { workspace = true }
+notify = { workspace = true }
+vte = { workspace = true }
+blake3 = { workspace = true }
+jwalk = { workspace = true }
+rayon = { workspace = true }
+fs3 = { workspace = true }
+zstd = { workspace = true }
+sysinfo = { workspace = true }
+ctrlc = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "macros"] }
+tempfile = { workspace = true }
+mock-cli = { path = "../../tests/fixtures/mock_cli" }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }

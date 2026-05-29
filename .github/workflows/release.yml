@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Release Binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: agenthub-linux-x86_64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: agenthub-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: agenthub-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: agenthub-windows-x86_64.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --bin agenthub --release --target ${{ matrix.target }}
+      - name: Rename artifact (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/agenthub" "${{ matrix.artifact }}"
+      - name: Rename artifact (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: cp "target/${{ matrix.target }}/release/agenthub.exe" "${{ matrix.artifact }}"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Flatten artifacts for release
+        shell: bash
+        run: |
+          find dist -type f -exec mv -v {} . \;
+          ls -la agenthub-*
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agenthub-linux-x86_64
+            agenthub-macos-x86_64
+            agenthub-macos-arm64
+            agenthub-windows-x86_64.exe

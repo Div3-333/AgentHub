@@ -1,0 +1,76 @@
+[package]
+name = "agenthub-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+autotests = false
+
+[features]
+default = []
+vfs-tests = ["agenthub-core/vfs-tests"]
+server-tests = ["agenthub-core/server-tests"]
+# Matches `agenthub-core/full` (pipeline, PTY, sanitizer, moderation).
+full = ["agenthub-core/full", "vfs-tests", "server-tests"]
+# Alias for CI: `cargo test -p agenthub-integration --all-features`
+bootstrap-tests = ["full"]
+
+[dev-dependencies]
+# `full` is enabled per-[[test]] via `required-features`; listed here for IDE/rust-analyzer.
+agenthub-core = { workspace = true, default-features = false, features = ["full"] }
+agenthub = { path = "../../crates/agenthub" }
+mock-cli = { path = "../fixtures/mock_cli" }
+tokio = { workspace = true }
+tempfile = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+] }
+
+[[test]]
+name = "integration_context_injection"
+path = "context_injection.rs"
+
+[[test]]
+name = "integration_vfs_snapshot_revert"
+path = "vfs_snapshot_revert.rs"
+required-features = ["vfs-tests"]
+
+[[test]]
+name = "integration_pty_lifecycle"
+path = "pty_lifecycle.rs"
+required-features = ["full"]
+
+[[test]]
+name = "integration_stream_sanitizer"
+path = "stream_sanitizer.rs"
+required-features = ["full"]
+
+[[test]]
+name = "integration_pipeline_frankenstein"
+path = "pipeline_frankenstein.rs"
+required-features = ["full"]
+
+[[test]]
+name = "integration_rbac_moderation"
+path = "rbac_moderation.rs"
+required-features = ["full"]
+
+[[test]]
+name = "integration_app_bootstrap_smoke"
+path = "app_bootstrap_smoke.rs"
+required-features = ["bootstrap-tests"]
+
+[[test]]
+name = "integration_smoke_e2e"
+path = "smoke_e2e.rs"
+required-features = ["full"]

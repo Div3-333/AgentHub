@@ -1,57 +1,72 @@
-# The AgentHub Manifesto: The Ultimate Developer Multiplier
+# Vision
 
-## 1. Executive Summary
-AgentHub transforms the fragmented, chaotic landscape of free-tier AI CLI tools into a unified, world-class orchestration platform. 
+## What we are building
 
-It relies on a brilliant constraint: **Zero API Costs.** By acting as a "Phantom Terminal" that invisibly manages child CLI processes, AgentHub gives developers the power of an enterprise multi-agent system using the free tools they already have. 
+AgentHub is a **Phantom Terminal Orchestrator**: a single Rust-native terminal application that unifies every free-tier AI CLI you already use—Gemini CLI, Claude Code, Codex CLI, Aider, Cursor CLI, GitHub Copilot CLI, and future tools that ship a **Driver Profile** JSON.
 
-But AgentHub is not just a chat wrapper. It introduces a paradigm shift: **The Discord Server for Agents.** It treats your workspace like a sophisticated multiplayer chat server where you are the Server Admin, and the AIs are users with roles, permissions, and specialized onboarding.
+You stay in one surface. Agents run as real child processes in hidden pseudo-terminals. Prompts go in as keystrokes; answers come back as sanitized text on a shared message bus. No API keys inside AgentHub. No subscriptions to AgentHub. No telemetry from AgentHub.
 
-## 2. The "Killer Hooks" (Why Developers Will Crave This)
+## The problem
 
-To attract a massive audience, AgentHub provides features that are impossible to achieve with standard web interfaces or single CLIs:
+Developers today open five or six terminal tabs, each with a different CLI, each with different spinner noise, rate-limit wording, and interactive prompts. Context does not flow between tools. Nobody has a consistent way to run “Gemini drafts, Claude reviews, shell checks” as a governed workflow. Multi-agent products often assume cloud APIs; power users already live in the terminal.
 
-### Hook 1: The "Discord Server" Mechanics & Workspace Modes
-AgentHub provides a deeply hierarchical, role-based chat environment, scalable from quick chats to massive operations.
-*   **Workspace Modes:**
-    *   **Direct Message (DM):** 1-on-1 private PTY session with a single agent.
-    *   **Group Chat:** A lightweight, unconstrained "Open Floor" where a small handful of agents converse freely.
-    *   **Server Mode:** A heavy-duty, structured hierarchy with defined roles, channels, and strict moderation limits.
-*   **The Admin Feature:** Complete Admin Control over agents. You can **Mute**, **Deafen**, **Kick**, or **Time-Out** any agent. 
-*   **Role-Based Access Control (RBAC):** Promote/demote agents to roles like `Leader`, `Reviewer`, or `Auditor`. Create and delete custom roles on the fly. Custom roles dictate how much weight an agent's output has.
-*   **Multi-Instance Spawning:** Launch `@gemini-1`, `@gemini-2`, and `@claude` simultaneously.
-*   **Subagent Capture Protocol:** If an underlying CLI tool (e.g., Aider) attempts to spawn its own internal subagent, AgentHub detects the child process, intercepts it, and registers it as a new distinct user in the Server, bringing hidden subagents into the visible group chat.
+## The solution
 
-### Hook 2: "The Grand Induction" (System Prompting)
-Free-tier CLIs don't know they are in a group chat. AgentHub fixes this.
-*   **The Feature:** Upon initialization, AgentHub silently injects a massive, hidden "Induction Prompt" into every agent's PTY. 
-*   **The UX:** It tells them: *"You are now in AgentHub. You are role [Reviewer]. You will see messages prefixed with [AgentName says]. You must keep answers concise..."* They are instantly contextualized for multiplayer collaboration.
+AgentHub treats the terminal as the integration layer:
 
-### Hook 3: "LLM Racing" (Parallel A/B Testing)
-Never wonder if Claude or Gemini would write a better script. 
-*   **The Feature:** Type one prompt and hit `Cmd+Enter`. AgentHub multiplexes the input and sends it to 3 different invisible CLIs simultaneously. 
-*   **The UX:** Your screen splits into 3 columns, streaming the outputs in real-time. You review the code, pick the winner with an arrow key, and instantly merge it into your codebase.
+1. **Spawn** — Driver profiles describe how to launch each CLI and detect when it is ready for input.
+2. **Sanitize** — A virtual terminal grid strips ANSI spinners and detects turn boundaries without an API.
+3. **Route** — A central bus delivers messages by tag, mode, channel, and permission.
+4. **Recover** — VFS snapshots let you undo agent-driven file changes (revert from the TUI completes in v0.2).
+5. **Compare** — LLM Racing sends one prompt to many agents and lets you pick the winner in split panes.
 
-### Hook 4: "Time-Travel Workspace" (Absolute Safety)
-Autonomous agents frequently break codebases. Developers are terrified of letting AIs run wild.
-*   **The Feature:** Before AgentHub allows *any* agent to write to a file, it creates an invisible, micro-second shadow snapshot of the workspace (using an under-the-hood `git stash` mechanism). 
-*   **The UX:** If an agent ruins your project, you press `Ctrl+Z`. AgentHub instantly reverts the codebase and the chat history to the exact state before the prompt. Complete fearlessness.
+The experience is intentionally **Discord-like**: you are always the server admin; agents are members with roles, tags, and moderation commands.
 
-### Hook 5: The "Frankenstein" Pipeline (Unix Meets AI)
-Agents shouldn't just talk to agents. They should talk to your compiler.
-*   **The Feature:** Seamlessly pipe AI outputs into traditional Unix tools and feed the errors back to the AI.
-*   **The UX:** `@gemini build the auth route | > cargo check | @gemini fix the compiler errors`. AgentHub automates the entire compile-and-fix loop locally.
+## Workspace modes (product metaphor)
 
-### Hook 6: Zero-Config "Auto-Context" (RAG without APIs)
-Free CLIs lack context of your whole repository. 
-*   **The Feature:** AgentHub parses your local repository using Tree-Sitter to build an AST (Abstract Syntax Tree). 
-*   **The UX:** You ask `@gemini update the database schema`. AgentHub automatically finds `schema.rs`, minifies the text, and stealthily concatenates it to your prompt *before* injecting it into Gemini's invisible terminal. You get full-repo awareness for free.
+| Mode | User story |
+|------|------------|
+| **DM** | One model, zero ceremony. |
+| **Group Chat** | Several agents in one room, brainstorming. |
+| **Server** | Roles, permissions, `#channel` routing, and safety rails for structured work. |
 
-## 3. The Core UX: The "Command Center"
-AgentHub provides a blazingly fast, Rust-powered Terminal User Interface (TUI) via `ratatui`. It feels like `tmux` meets Discord. 
-*   **Main Pane:** The Unified Group Chat.
-*   **Sidebar:** Agent Health (Is Gemini thinking? Is Aider waiting for input?).
-*   **Bottom Pane:** The Pipeline Visualizer (showing you exactly where data is flowing).
+Modes change broadcast rules, RBAC enforcement, and spawn limits—not just labels.
 
-## 4. The Market Positioning
-AgentHub is positioned as the **"Swiss Army Knife for the AI Era."** It is free, entirely local, requires zero subscriptions, and multiplies a developer's productivity by allowing them to treat free AIs as composable, safe, and racing compute nodes.
+## Principles
+
+1. **Local-first** — SQLite history, shadow snapshots, and config on your machine. AgentHub does not operate a cloud control plane.
+2. **CLI-native** — We orchestrate terminal processes, not REST shims.
+3. **Deterministic** — Typed `BusEvent`s, logged transitions, reproducible tests with `mock_cli`.
+4. **Extensible** — New CLIs are JSON profiles; custom roles live beside config.
+5. **Honest scope** — PTY children are not a security sandbox; snapshots and RBAC are the safety net.
+
+## Who it is for
+
+- **Individual developers** who already authenticate via vendor CLIs and want one control room.
+- **Power users** running pipelines (`@agent | > cargo | @agent`), racing, and (soon) sparring from the same UI.
+- **Contributors** implementing against a sealed blueprint and integration tests.
+
+## What success looks like
+
+**v0.1 (shipped):** Production `agenthub` binary, live TUI, PTY orchestration, moderation, LLM racing, snapshots, and a complete core library (pipeline, spar, context, VFS revert) validated by tests. Some `/help` items (undo, spar, chat pipelines, auto-context) land in **v0.2**.
+
+**v0.2:** Every advertised slash command and chat syntax works without reading source; published release binaries; optional eBPF subagent on Linux.
+
+**Longer term:** CoW snapshot backends (APFS/Btrfs), richer driver ecosystem, optional PTY debug capture for profile authors only.
+
+## What we refuse to become
+
+- An API aggregator competing on model pricing
+- A web or Electron app pretending to be a terminal
+- A `tmux` layout with no semantic routing
+- A black box that phones home
+
+## Documentation map
+
+| Document | Audience |
+|----------|----------|
+| [docs/AGENTHUB_BLUEPRINT.md](../docs/AGENTHUB_BLUEPRINT.md) | Complete engineering specification |
+| [docs/USER_GUIDE.md](../docs/USER_GUIDE.md) | Daily TUI usage |
+| [docs/AGENT_MANUAL.md](../docs/AGENT_MANUAL.md) | Operators and implementers |
+| [docs/ROADMAP.md](../docs/ROADMAP.md) | v0.1 vs v0.2 |
+| [about/ARCHITECTURE.md](ARCHITECTURE.md) | Runtime structure |

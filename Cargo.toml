@@ -1,48 +1,96 @@
 [workspace]
-resolver = "2"
 members = [
-    "crates/core",
-    "crates/daemon",
-    "crates/mcp",
-    "crates/rag",
-    "crates/provider",
-    "crates/xtask",
     "crates/agenthub",
+    "crates/core",
+    "crates/tui",
+    # Phase 1 test harness (extends blueprint §2.1)
+    "tests/fixtures/mock_cli",
+    "tests/integration",
 ]
+resolver = "2"
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+authors = ["AgentHub Contributors"]
 license = "MIT"
-repository = "https://github.com/agenthub/agenthub"
+description = "Phantom Terminal Orchestrator — multi-CLI PTY control surface"
+repository = "https://github.com/Div3-333/AgentHub"
 
 [workspace.dependencies]
+# Async Runtime
 tokio = { version = "1.40", features = ["full"] }
+tokio-uring = "0.4"
+
+# Concurrency
+crossbeam = "0.8"
+crossbeam-queue = "0.3"
+dashmap = "5.5"
+parking_lot = "0.12"
+
+# PTY
+portable-pty = "0.8"
+
+# ANSI / Terminal Parsing
+vte = "0.13"
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty", package = "alacritty_terminal" }
+
+# Regex & Pattern Matching
+regex = "1.10"
+regex-automata = "0.4"
+aho-corasick = "1.1"
+
+# Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# Database
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-native-tls", "migrate", "json"] }
+
+# Filesystem / Hashing
+blake3 = { version = "1.5", features = ["rayon"] }
+jwalk = "0.8"
+ignore = "0.4"
+fs3 = "0.5"
+tempfile = "3.10"
+
+# Tree-Sitter / AST
+tree-sitter = "0.22"
+tree-sitter-rust = "0.21"
+tree-sitter-python = "0.21"
+tree-sitter-typescript = "0.21"
+tree-sitter-go = "0.21"
+tree-sitter-javascript = "0.21"
+notify = "6.1"
+
+# TUI
+ratatui = "0.26"
+crossterm = "0.27"
+
+# Error Handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Utilities
+uuid = { version = "1.8", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-crossbeam = "0.8"
-uuid = { version = "1.11", features = ["v4", "serde"] }
-thiserror = "2.0"
-async-trait = "0.1"
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
-axum = { version = "0.8", features = ["macros"] }
-tower-http = { version = "0.6", features = ["cors", "trace"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-dashmap = "6.1"
-futures = "0.3"
-tokio-stream = "0.1"
-petgraph = "0.7"
-tokio-util = { version = "0.7", features = ["codec"] }
-anyhow = "1.0"
-rand = "0.8"
-keyring = "3.6"
-regex = "1.11"
-agenthub-core = { path = "crates/core" }
-agenthub-mcp = { path = "crates/mcp" }
-agenthub-provider = { path = "crates/provider" }
-agenthub-rag = { path = "crates/rag" }
+bitflags = "2.4"
+bumpalo = "3.16"
+rayon = "1.10"
+dirs = "5.0"
+ctrlc = "3.4"
+zstd = "0.13"
+sysinfo = "0.33"
+
+# Platform (blueprint §2.1 — use per-crate [target] deps when wiring eBPF/ETW)
+aya = "0.12"
+windows-sys = { version = "0.52", features = ["Win32_System_Diagnostics_Etw"] }
+
+# Internal crates
+agenthub-core = { path = "crates/core", default-features = false }
+agenthub-tui = { path = "crates/tui" }
 
 [profile.release]
 opt-level = 3

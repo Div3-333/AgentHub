@@ -1,182 +1,226 @@
-# AGENTHUB: THE MONOLITHIC CONSTRUCTION MANUAL (V5: TRUE ENTERPRISE SYSTEMS SPECIFICATION)
+# Agent Manual
 
-**TARGET AUDIENCE:** Autonomous AI Engineering Agents & Senior Systems Programmers
-**STATUS:** STRICT INSTRUCTION SET. NO ABSTRACTIONS. NO ASSUMPTIONS.
-**AUTHOR:** World-Class Systems Architect
-
-## 0. PREAMBLE & INVARIANTS (THE LAWS OF PHYSICS)
-This specification dictates the physical memory layout, concurrency models, and algorithmic complexities required to build AgentHub. You will not rely on garbage collection or unbounded queues.
-1. **Memory Ordering:** All atomic operations must explicitly declare their memory ordering (`Ordering::SeqCst` for coordination, `Ordering::Acquire`/`Ordering::Release` for lock-free synchronization, `Ordering::Relaxed` ONLY for statistical counters).
-2. **Allocation:** Heap allocations inside the hot-path (PTY reading, stream parsing) are STRICTLY FORBIDDEN. All buffers must be pre-allocated and managed via `bumpalo` (Arena Allocation) or object pools (`crossbeam-queue`).
-3. **Concurrency:** `std::sync::Mutex` is banned in the hot-path. Use `tokio::sync::RwLock` for async state, and `crossbeam::epoch` for lock-free concurrent data structures.
-4. **Error Handling:** Every `Result` must be mapped to a custom `thiserror` enum that implements `Into<u16>` for deterministic exit codes mapping to POSIX standards.
+Guide for operators, contributors, and autonomous coding agents extending AgentHub. The **source of truth** for behavior and invariants is [AGENTHUB_BLUEPRINT.md](AGENTHUB_BLUEPRINT.md). End-user prose is in [USER_GUIDE.md](USER_GUIDE.md).
 
 ---
 
-## MODULE 1: THE HYPER-CONCURRENT PTY ENGINE (`crates/core/src/pty/`)
+## Quick reference
 
-### 1.1 `manager.rs`: PTY Lifecycle & OS-Level Spawning
-**Objective:** Spawn isolated PTYs with absolute guarantee against zombie processes and descriptor leaks.
-*   **Dependencies:** `portable-pty = "0.8"`, `libc = "0.2"` (Unix), `winapi = "0.3"` (Windows).
-*   **Data Structures:**
-    ```rust
-    #[repr(C, align(64))] // Cache-line alignment to prevent false sharing
-    pub struct AgentPty {
-        pub id: uuid::Uuid,
-        pub role_mask: AtomicU32,
-        pub master_fd: RawFd, // Store raw descriptor for io_uring/epoll polling
-        pub process_id: u32,
-        status: AtomicU8, 
-    }
-    ```
-*   **Implementation Specs (Unix):**
-    1. Call `openpty()` via `libc`. Set `O_NONBLOCK` on the master file descriptor immediately using `fcntl()`.
-    2. Before `fork()`, configure `termios`: Disable `ECHO`, `ICANON`, `ISIG`. Set `VMIN=1`, `VTIME=0`.
-    3. Post `fork()`, in the child process: Call `setsid()` to create a new session. `dup2` the slave PTY to `STDIN_FILENO`, `STDOUT_FILENO`, `STDERR_FILENO`. Close all other file descriptors above 2 to prevent leaking secure daemon sockets to the untrusted CLI agent.
-    4. Execute `execvp`.
-*   **Implementation Specs (Windows):**
-    1. Use `CreatePseudoConsole` (ConPTY API) via `winapi`.
-    2. Initialize `STARTUPINFOEXW` with `PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE`.
-    3. Call `CreateProcessW`.
-
-### 1.2 `io.rs`: Zero-Copy Non-Blocking Byte Streams
-**Objective:** Drain PTYs at gigabit speeds without allocating on the heap.
-*   **Dependencies:** `tokio-uring` (Linux), `mio` (macOS/Windows fallback).
-*   **Data Structures:**
-    ```rust
-    pub struct PtyRingBuffer {
-        buffer: UnsafeCell<[u8; 65536]>, // 64KB L1 Cache optimized buffer
-        head: AtomicUsize,
-        tail: AtomicUsize,
-    }
-    ```
-*   **Implementation Specs:**
-    1. **Backpressure & Topology:** Do NOT use `tokio::mpsc`. The overhead of allocating `Vec<u8>` for every message is unacceptable. Instead, allocate a statically sized lock-free `PtyRingBuffer` shared between the Reader thread and the Parser thread.
-    2. **Read Loop (Linux):** Use `io_uring` to queue `IORING_OP_READ` operations directly into the ring buffer memory. This achieves zero-copy transfer from kernel space to user space.
-    3. **Read Loop (Fallback):** Use `epoll`/`kqueue` via `mio::Poll`. When `Readable` is triggered, loop `libc::read()` until `EAGAIN` or `EWOULDBLOCK` is hit.
-    4. **Memory Fence:** After writing to the ring buffer, execute `head.store(new_head, Ordering::Release)` to publish the bytes to the Parser thread.
-
-### 1.3 `subagent.rs`: eBPF Process Hooking (Linux) & ETW (Windows)
-**Objective:** Deterministically catch sub-processes without polling lag.
-*   **Dependencies:** `aya` (eBPF), `windows-sys` (ETW).
-*   **Implementation Specs:**
-    1. **Linux (eBPF):** Do not poll `sysinfo`. It is slow and misses short-lived processes. Write an eBPF program attached to the `sched_process_exec` tracepoint. Filter by `task->parent->pid == agent_pty_pid`. Send events to user-space via a BPF Ring Buffer.
-    2. **Windows:** Subscribe to Event Tracing for Windows (ETW) `Process/Start` events. Filter by `ParentId`.
-    3. **Action:** When detected, automatically create a new `AgentPty` struct, bind it to the detected PID's standard outputs (if accessible), and register it in the RBAC matrix with the `Subagent` role.
+| Task | Command / entry point |
+|------|------------------------|
+| Run production stack | `cargo run -p agenthub` → [`bootstrap::run`](../crates/agenthub/src/bootstrap.rs) |
+| Preview UI only (no core) | `cargo run -p agenthub-tui` or `agenthub_tui::run()` → `App::new_demo` |
+| Spawn agent | `pty::spawn_agent` or `/spawn` via `moderation::execute_command` |
+| User → PTY path | `BusEvent::UserMessage` → `spawn_bus_router` → `route_message_injection` |
+| Racing | `bus::racing::try_dispatch_racing_user_message` |
+| Pipeline | `pipeline::PipelineExecutor::execute` |
+| Spar | `pipeline::SparEngine::run` + `parse_spar_command` |
+| Snapshot | `vfs::create_snapshot_with_config` or `/snapshot` via `vfs::handle_slash_command` |
+| Revert | `vfs::revert_latest` / `VfsEngine::revert_latest` |
+| Context | `context::inject_context` (not called from router in v0.1) |
+| Slash dispatch (TUI) | `tui::events::dispatch_slash_core` → `try_handle_slash_command` then `execute_command` |
 
 ---
 
-## MODULE 2: SIMD-ACCELERATED STREAM SANITIZER (`crates/core/src/sanitizer/`)
+## Build and verify
 
-### 2.1 `parser.rs`: Headless Grid State Machine
-**Objective:** Parse ANSI codes perfectly. Ignoring codes is insufficient for loading spinners (`\x1b[2K\x1b[G/`). You must maintain a virtual terminal grid.
-*   **Dependencies:** `alacritty_terminal` (strip out the rendering, keep the grid logic).
-*   **Implementation Specs:**
-    1. Initialize a headless `Grid` with dimensions 120x40.
-    2. As bytes arrive from the `PtyRingBuffer`, feed them into the `vte::Parser` implementing the `alacritty` handler.
-    3. The grid will naturally overwrite loading spinners in memory.
-    4. **Extraction:** Once per frame (16ms), or upon turn completion, perform a linear scan of the grid memory. Strip trailing whitespace from each row, concatenate with `\n`, and yield a `String`. This guarantees the LLM only sees the final visual state, not the chaotic history of cursor movements.
+```bash
+# Full workspace (CI parity)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-features -- -D warnings
+cargo test --workspace --all-features
 
-### 2.2 `heuristic.rs`: SIMD Regex Turn Detection
-**Objective:** Detect prompts with zero CPU overhead.
-*   **Dependencies:** `regex-automata = "0.4"`, `aho-corasick = "1.1"`.
-*   **Implementation Specs:**
-    1. Do not use standard regex matching on every byte. It will choke the CPU.
-    2. Compile the driver's prompt pattern into a Deterministic Finite Automaton (DFA) using `regex-automata`.
-    3. Use `aho-corasick` for SIMD-accelerated pre-filtering. Scan the incoming `[u8]` buffer using AVX2/NEON instructions for the last character of the prompt (e.g., `>`).
-    4. Only if the SIMD filter hits, execute the full DFA backwards from the end of the buffer.
-    5. **Micro-Timeout Lock:** If DFA matches, use a `tokio::time::sleep` of 100ms. If the ring buffer `head` advances during this sleep, abort the turn completion. If it remains static, execute an atomic compare-and-swap to transition the agent state to `Idle`.
+# Core integration only (PTY, sanitizer, RBAC, pipeline, VFS)
+cargo test -p agenthub-core --features full
 
----
+# Skip real PTY on hosts without mock CLI / Windows CI
+AGENTHUB_SKIP_PTY=1 cargo test --workspace --all-features
+```
 
-## MODULE 3: SERVER MECHANICS & RBAC (`crates/core/src/server/`)
+| Feature flag (`agenthub-core`) | Enables |
+|-------------------------------|---------|
+| `config-tests` | Config load/validate |
+| `db-tests` | SQLite schema + `DbClient` |
+| `bus-tests` | Bus types + router unit tests |
+| `vfs-tests` | Snapshot/revert without full PTY |
+| `server-tests` | RBAC/modes unit tests |
+| `context-tests` | Indexer/injector compile tests |
+| `full` | PTY, sanitizer, pipeline, server integration tests |
 
-### 3.1 `rbac.rs`: Lock-Free Concurrent Hash Maps
-**Objective:** Manage roles and permissions across thousands of incoming events without lock contention.
-*   **Dependencies:** `dashmap = "5.5"`, `bitflags = "2.4"`.
-*   **Data Structures:**
-    ```rust
-    // Bitflags defined as atomic u64 for exact bit-masking
-    bitflags::bitflags! {
-        #[repr(transparent)]
-        pub struct Permissions: u64 {
-            const VIEW_CHANNEL   = 1 << 0;
-            const SEND_MESSAGES  = 1 << 1;
-            const EXECUTE_UNIX   = 1 << 2;
-            const MODIFY_ROLES   = 1 << 3;
-            const KICK_AGENTS    = 1 << 4;
-        }
-    }
-    
-    // Central Registry
-    pub struct ServerState {
-        // DashMap shards locks based on CPU cores, avoiding global contention
-        pub agents: DashMap<uuid::Uuid, Arc<AgentState>>,
-        pub roles: DashMap<String, Permissions>,
-    }
-    ```
-*   **Implementation Specs:**
-    1. When evaluating if Agent A can send a message, execute `let perms = server.agents.get(&id).unwrap().permissions.load(Ordering::Acquire);`.
-    2. Check `(perms & Permissions::SEND_MESSAGES.bits()) != 0`. This is a sub-nanosecond operation.
-
-### 3.2 `moderation.rs`: Signal Handling & Graceful Degradation
-*   **Implementation Specs:**
-    1. `TIMEOUT`: Do not just send `SIGSTOP`. The PTY buffer will fill up and crash the child process. You must continue reading the PTY via `io_uring` and silently discard the bytes into `/dev/null` until `SIGCONT` is sent.
-    2. `KICK`: Send `SIGTERM`. Wait 500ms using `tokio::time::timeout`. If the process has not yielded via `waitpid()`, escalate to `SIGKILL`. Close the master PTY file descriptor to free kernel resources.
+Production binary links core with the full orchestration stack via the `agenthub` crate dependency graph (not `no-default-features`).
 
 ---
 
-## MODULE 4: THE TIME-TRAVEL VFS (VIRTUAL FILE SYSTEM) (`crates/core/src/vfs/`)
+## Workspace layout
 
-### 4.1 `snapshot.rs`: Atomic Swap Copy-on-Write (CoW)
-**Objective:** Snapshot 10GB repositories instantly.
-*   **Dependencies:** `blake3 = { version = "1.5", features = ["rayon"] }`, `jwalk = "0.8"`.
-*   **Implementation Specs:**
-    1. If the underlying OS file system is Btrfs, ZFS, or APFS (macOS), completely bypass hashing. Use OS-level Copy-on-Write (CoW) system calls (e.g., `clonefile` on macOS, `BTRFS_IOC_CLONE` on Linux) to instantly duplicate the workspace with zero disk IO overhead.
-    2. **Fallback (ext4/NTFS):** Use `jwalk` to recursively iterate files. Hash chunks using `blake3` utilizing AVX-512 vectorization (`rayon` feature). 
-    3. Maintain an SQLite Manifest in WAL (Write-Ahead Logging) mode with `PRAGMA synchronous = NORMAL` for maximum write throughput.
+```text
+crates/agenthub/     # Binary: bootstrap, shutdown, TUI bridge
+crates/core/         # agenthub-core — all orchestration
+crates/tui/          # agenthub-tui — Ratatui UI
+drivers/             # Bundled DriverProfile JSON
+tests/fixtures/mock_cli/   # Fake CLI for CI
+tests/integration/         # Workspace shims → core/tests
+.github/workflows/         # ci.yml, release.yml
+```
 
-### 4.2 `revert.rs`: File Locking Mitigation
-**Objective:** Prevent file corruption if an agent is mid-write during an undo.
-*   **Dependencies:** `fs3 = "0.5"`
-*   **Implementation Specs:**
-    1. Before triggering a revert, freeze all Agent PTYs (`SIGSTOP`).
-    2. Attempt to acquire an exclusive lock `file.try_lock_exclusive()` on all files slated for reversion.
-    3. If locked, back off and retry.
-    4. Perform the revert via atomic rename operations: write the old file to a temporary path `.file.tmp`, then `libc::rename(".file.tmp", "file")`. This guarantees atomicity.
-
----
-
-## MODULE 5: DETERMINISTIC RAG (AST INJECTION) (`crates/core/src/context/`)
-
-### 5.1 `ast.rs`: Precise S-Expression Queries
-**Objective:** Extract ASTs perfectly for context injection.
-*   **Implementation Specs:**
-    1. Initialize `tree-sitter`.
-    2. Use the exact query for Rust to extract implementations and traits, not just functions:
-       ```scm
-       (trait_item name: (type_identifier) @trait_name)
-       (impl_item type: (type_identifier) @impl_name)
-       (function_item name: (identifier) @fn_name signature: (parameters) @params return_type: (_) @ret)
-       ```
-    3. Iterate the `QueryMatches`. Concatenate into a strictly formatted string.
-
-### 5.2 `injector.rs`: Token-Aware Prompt Management
-**Objective:** Never crash the CLI due to token limits.
-*   **Dependencies:** `tiktoken-rs = "0.5"`
-*   **Implementation Specs:**
-    1. Define `MAX_CONTEXT_TOKENS = 32000` (safe limit for free tiers).
-    2. Before injection, tokenize the User Prompt: `let prompt_tokens = tiktoken_rs::cl100k_base().unwrap().encode_with_special_tokens(prompt).len();`
-    3. Tokenize the AST Context. 
-    4. If `prompt_tokens + ast_tokens > MAX_CONTEXT_TOKENS`, apply the **Djikstra Pruning Algorithm**: Iteratively remove AST nodes that are lexically furthest from the files explicitly mentioned in the user prompt until the limit is respected.
-    5. Perform final string concatenation and write to PTY `stdin`.
+| Crate | Role |
+|-------|------|
+| `agenthub` | `AgentHubStack::boot`, `run_tui`, panic-safe `shutdown` + `kill_all_agents` |
+| `agenthub-core` | PTY, bus, server, pipeline, vfs, context, db |
+| `agenthub-tui` | `App::new_live` / `new_demo`, `CoreBridge`, events Part 15.2 |
 
 ---
 
-## FINAL VALIDATION & ACCEPTANCE CRITERIA (THE ARCHITECT'S MANDATE)
-This system is not complete until it passes the following draconian validation matrix:
-1. **Memory Leak Audit:** Run the entire test suite under `Valgrind` (Linux) and `Instruments` (macOS). Any byte of leaked memory results in a failed build.
-2. **Data Race Audit:** Run the test suite using `cargo miri test` and `cargo test --target x86_64-unknown-linux-gnu` with `RUSTFLAGS="-Zsanitizer=thread"`. Zero data races permitted in the ring buffers.
-3. **Fuzzing:** Compile `sanitizer/parser.rs` with `cargo-fuzz`. Feed 1 billion random bytes representing corrupted ANSI streams. If the VTE parser panics or enters an infinite loop, the code is rejected.
+## Boot sequence (operators)
 
-**THIS IS THE SPECIFICATION. EXECUTE WITHOUT COMPROMISE.**
+```text
+AgentHubConfig::load()     → ~/.agenthub/config.json (create defaults)
+DbClient::init_pool        → ~/.agenthub/agenthub.db + migrations
+ServerState::new()         → set_mode from config.default_mode
+spawn_bus_router           → broadcast bus + mpsc to TUI
+run_with_bridge            → live App + CoreBridge { moderation, db, bus_tx, cwd }
+```
+
+On exit: `kill_all_agents`, `db.end_session`, no zombie PTYs (`AgentPty::Drop`, global shutdown hook).
+
+**Do not** document or rely on a root `src/main.rs`; entry is `crates/agenthub/src/main.rs` only.
+
+---
+
+## Engineering invariants (never violate)
+
+1. No heap allocation in PTY read / parser / bus hot paths (ring buffer, pre-sized grids).
+2. No `std::sync::Mutex` in async code — `tokio::sync`, `DashMap`, atomics on `AgentPty`.
+3. No `unwrap()` / `expect()` in production paths — `AgentHubError` + `Result`.
+4. `AgentPty::Drop` and `kill_agent` must terminate children (no zombies).
+5. No API keys, telemetry, or outbound HTTP from AgentHub.
+6. Durable state types derive `serde::Serialize` / `Deserialize` where persisted.
+7. `cargo clippy -- -D warnings` clean before merge.
+8. Tests must pass for touched crates; integration tests use `mock_cli`.
+
+---
+
+## Subsystems (implementer map)
+
+### PTY (`core/src/pty/`)
+
+- `spawn_agent`: driver validation, portable-pty, reader task → ring buffer → sanitizer task
+- `PtyStatus` atomics; `visible_in_chat` / `receives_broadcast` for mute/deafen
+- `subagent_watcher_task`: 250ms polling; `on_subagent_exec` registers `Subagent` role stubs
+- `SUBAGENT_CAPTURE_PENDING = false` — polling subagent registration is active; Linux eBPF is optional (`--features ebpf`) and falls back to polling when not loaded
+
+### Sanitizer (`core/src/sanitizer/`)
+
+- `VirtualGrid` + `vte` for spinner-safe text
+- Prompt regex + 100ms confirm; silence timeout fallback; `auto_reply_patterns`
+
+### Bus (`core/src/bus/`)
+
+- Capacity `BUS_CHANNEL_CAPACITY` (1024)
+- `route_message_injection`: UserMessage → racing OR mention/broadcast + channel filter
+- Injection format: `[{tag} says]: {content}\n`
+- Chaos stagger when multiple agents `Thinking`
+
+### Server (`core/src/server/`)
+
+- `rbac.rs`: `Permissions` bitflags, built-in roles, `~/.agenthub/roles.json`
+- `moderation.rs`: slash commands (no `/spar`, `/undo`, `/snapshot` — snapshot via vfs)
+- `induction.rs`: template + `READY` timeout
+- `modes.rs`: DM / GroupChat / Server, `create_channel`, `parse_channel_tag`
+
+### Pipeline (`core/src/pipeline/` — feature `full`)
+
+- `parser::parse`: split on ` | `
+- `PipelineExecutor::execute`: snapshot, sequential stages, 5min agent / 60s unix timeouts
+- `SparEngine`, `parse_spar_command`, `SPAR_ABORT`
+
+### VFS (`core/src/vfs/` — feature `vfs-tests` or `full`)
+
+- Blake3 manifest, jwalk copy, exclude `.git`, `target`, `.agenthub_shadow`, etc.
+- `handle_slash_command`: **only** `/snapshot` today
+- `revert_latest`: freeze PIDs, atomic rename restore
+
+### Context (`core/src/context/`)
+
+- `AstIndexer` + tree-sitter; `inject_context` / `--nocontext`
+- **Integration gap:** not invoked from `route_message_injection` (v0.2)
+
+### TUI (`crates/tui/`)
+
+- `on_bus_event`: agents, chat, racing, pipeline viz from bus
+- `on_submit`: slash → `route_slash_command`; else `UserMessage` on bus
+- `dispatch_slash_core`: vfs first, then moderation
+
+---
+
+## v0.1 integration gaps (do not claim shipped)
+
+When updating docs or marketing, treat these as **v0.2** unless code changes:
+
+| Item | Code location | Fix |
+|------|---------------|-----|
+| `/undo` | `moderation::execute_command` unknown | Extend `vfs::handle_slash_command` or moderation delegate |
+| `/spar` | Same | Call `SparEngine::run` from async slash handler |
+| Chat pipeline | `app::on_submit` | Detect `parse()` ok + ` \| ` → spawn `PipelineExecutor` |
+| Auto-context | `bus/router.rs` | Call `inject_context` before inject |
+| Channel UX | `modes::create_channel` | Optional slash + TUI |
+
+---
+
+## Adding a driver profile
+
+1. Copy `drivers/gemini.json` → `~/.agenthub/drivers/mycli.json`.
+2. Set `"name": "mycli"` (must match filename stem).
+3. Set `executable`, `prompt_regex` (test against real CLI prompt line), `silence_timeout_ms`.
+4. Add `rate_limit_patterns` and `auto_reply_patterns` from observed CLI behavior.
+5. Validate: `cargo test -p agenthub-core --no-default-features --features config-tests config`.
+
+Spawn: `/spawn mycli` or `spawn_agent("mycli", ...)`.
+
+---
+
+## Database
+
+- Migration: `crates/core/src/db/migrations/001_initial_schema.sql`
+- WAL pragmas in `DbClient::apply_pragmas`
+- Primary writer path: bus router `log_bus_event`
+- Tables: `sessions`, `agents`, `messages`, `pipelines`, `pipeline_stages`, `snapshots`, `snapshot_files`, `custom_roles`, `pty_debug_log`
+
+---
+
+## Testing strategy
+
+| Test file | Requires | Covers |
+|-----------|----------|--------|
+| `pty_lifecycle` | `full` | spawn, inject, kill |
+| `stream_sanitizer` | `full` | grid, turn detection |
+| `rbac_moderation` | `full` | slash commands, induction |
+| `pipeline_frankenstein` | `full` | pipeline + spar |
+| `vfs_snapshot_revert` | `vfs-tests` | snapshot + revert |
+| `bus_routing` | `bus-tests` | routing helpers |
+
+Use `mock_cli` env vars (`MOCK_CLI_PROMPT`, `MOCK_CLI_LATENCY_MS`, etc.) per blueprint Part 17.
+
+---
+
+## CI / release
+
+- **ci.yml:** ubuntu + macos + windows (`AGENTHUB_SKIP_PTY=1` on Windows), fmt, clippy `-D warnings`, test `--all-features`, release build
+- **release.yml:** tagged `v*` → per-triple binaries (`agenthub-linux-x86_64`, …)
+
+---
+
+## Phase gates (blueprint Part 18)
+
+All 12 phases are marked complete in the blueprint. New work should close **v0.2 integration gaps** above without breaking Part 0.3 invariants.
+
+Part 19 “shippable” checklist: see blueprint table — criteria 1–10 documented as met for the engine; user-facing gap list is in [ROADMAP.md](ROADMAP.md).
+
+---
+
+## Related documents
+
+- [USER_GUIDE.md](USER_GUIDE.md) — operators using the TUI
+- [ROADMAP.md](ROADMAP.md) — v0.1 shipped / v0.2 planned
+- [ARCHITECTURE.md](../about/ARCHITECTURE.md) — runtime diagram
+- [VISION.md](../about/VISION.md) — product narrative

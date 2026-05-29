@@ -1,0 +1,14 @@
+{
+  "name": "cursor",
+  "display_name": "Cursor CLI",
+  "executable": "cursor",
+  "args": [],
+  "env": { "NO_COLOR": "1", "TERM": "dumb" },
+  "prompt_regex": "^>\\s*$",
+  "silence_timeout_ms": 8000,
+  "init_sequence": [],
+  "rate_limit_patterns": ["rate limit", "429"],
+  "auto_reply_patterns": {},
+  "supports_multi_instance": true,
+  "max_instances": 0
+}
