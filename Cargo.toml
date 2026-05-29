@@ -1,11 +1,51 @@
-[package]
-name = "agenthub"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/daemon",
+    "crates/mcp",
+    "crates/rag",
+    "crates/provider",
+    "crates/xtask",
+    "crates/agenthub",
+]
 
-[dependencies]
-crossterm = "0.29.0"
-ratatui = "0.30.0"
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.150"
-tokio = { version = "1.52.3", features = ["full"] }
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/agenthub/agenthub"
+
+[workspace.dependencies]
+tokio = { version = "1.40", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+crossbeam = "0.8"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+thiserror = "2.0"
+async-trait = "0.1"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate"] }
+axum = { version = "0.8", features = ["macros"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+dashmap = "6.1"
+futures = "0.3"
+tokio-stream = "0.1"
+petgraph = "0.7"
+tokio-util = { version = "0.7", features = ["codec"] }
+anyhow = "1.0"
+rand = "0.8"
+keyring = "3.6"
+regex = "1.11"
+agenthub-core = { path = "crates/core" }
+agenthub-mcp = { path = "crates/mcp" }
+agenthub-provider = { path = "crates/provider" }
+agenthub-rag = { path = "crates/rag" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

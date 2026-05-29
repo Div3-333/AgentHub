@@ -1,0 +1,12 @@
+[package]
+name = "agenthub"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "agenthub"
+path = "src/main.rs"
+
+[dependencies]
+crossterm = "0.29.0"
+ratatui = "0.30.0"
