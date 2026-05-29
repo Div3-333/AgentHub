@@ -48,6 +48,22 @@ This roadmap is an exhaustive, granular engineering plan to build AgentHub into 
     - [ ] Capture OS `stderr` and route it back to the agent PTY automatically for self-healing code loops.
 
 
+## Phase 4.5: The Discord Server Mechanics (RBAC & Moderation)
+- [ ] **Agent Induction Protocol (System Prompting):**
+    - [ ] Create a hidden initialization phase. When an agent is spawned, instantly push a massive context prompt into its `stdin` explaining AgentHub, its specific role, and how to read `[Agent X says]` prefixes.
+    - [ ] Wait for the agent to acknowledge the rules before marking it "Online" in the UI.
+- [ ] **Role-Based Access Control (RBAC):**
+    - [ ] Define default roles: `Leader` (can override others), `Builder` (writes code), `Reviewer` (critiques), `Auditor` (security checks).
+    - [ ] Build a JSON schema to allow users to create Custom Roles with custom induction prompts.
+- [ ] **Server Moderation Commands:**
+    - [ ] `/mute @agent`: Agent stays active but its output is hidden from the group chat.
+    - [ ] `/deafen @agent`: Agent stays active but stops receiving broadcasts from other agents.
+    - [ ] `/kick @agent`: Forcefully sends `SIGKILL` to the specific agent's PTY.
+    - [ ] `/timeout @agent 5m`: Temporarily suspends the agent's PTY process.
+- [ ] **Multi-Instance Scaling:**
+    - [ ] Update the PTY Manager to spawn unique clones. E.g., spawn `/usr/bin/gemini-cli` three times, assigning them internal tags `@gemini-1`, `@gemini-2`, `@gemini-3`.
+    - [ ] Implement graceful fallback: If an agent locks up due to IP limits (e.g., trying to run 5 Cursor CLIs), catch the error and alert the user.
+
 ## Phase 5: The Time-Travel Workspace (Safety Engine)
 - [ ] **Shadow VFS Implementation (Hook Feature 2):**
     - [ ] Create `.agenthub_shadow/` architecture in the project root.
