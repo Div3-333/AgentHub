@@ -1,53 +1,73 @@
-# The "Phantom Terminal" Implementation Roadmap
+# The Ultimate Phantom Terminal Roadmap
 
-This roadmap details the engineering required to build a world-class CLI wrapper and orchestrator without relying on APIs.
+This roadmap is an exhaustive, granular engineering plan to build AgentHub into a world-class product. Completion of these phases guarantees an industry-grade developer multiplier with massive viral potential.
 
-## Phase 1: Foundations & The PTY Engine
+## Phase 1: Foundations & The PTY Core
 - [x] Initial project scaffolding (Rust + Ratatui).
-- [ ] **Pseudo-Terminal (PTY) Integration:**
-    - [ ] Integrate `portable-pty` or similar crate.
-    - [ ] Implement `PtyProcess` wrapper: Spawn an arbitrary shell command (e.g., `cmd.exe /c gemini`) inside a hidden PTY.
-    - [ ] Implement asynchronous, non-blocking readers for the PTY output stream.
-    - [ ] Implement robust `stdin` writing (sending prompts as if typed by a keyboard, followed by `\n` or `\r\n`).
+- [ ] **The PTY Manager Module:**
+    - [ ] Integrate `portable-pty`.
+    - [ ] Create `struct PtyChild { master: Box<dyn MasterPty>, slave: Box<dyn SlavePty> }`.
+    - [ ] Implement non-blocking asynchronous `read_stdout` looping tasks.
+    - [ ] Implement `write_stdin` with raw byte injection.
+- [ ] **Driver Profile System:**
+    - [ ] Define JSON schema for CLI profiles (executable name, init args, prompt regex patterns).
+    - [ ] Build configuration loader to parse `~/.agenthub/drivers.json`.
 
-## Phase 2: Stream Sanitization & Parsing
-- [ ] **The ANSI Stripper:**
-    - [ ] Implement a robust state-machine parser to strip ANSI escape codes (colors, cursor movements).
-    - [ ] Handle terminal bell (`\x07`) and backspace (`\x08`) characters properly.
-- [ ] **Prompt Detection:**
-    - [ ] Implement regex-based detection to know when an agent has finished its turn. (e.g., waiting for the `>` or `User:` prompt to appear in the stream).
-    - [ ] Build a buffering system that accumulates chunks of text until the "ready" prompt is detected, then fires a `MessageComplete` event.
+## Phase 2: Stream Sanitization & Heuristic Extraction
+- [ ] **The ANSI Stripper Pipeline:**
+    - [ ] Implement the `vte` parser to process raw PTY bytes.
+    - [ ] Filter out all non-printable control characters while preserving `\n` and `\t`.
+- [ ] **Heuristic "Turn" Detection:**
+    - [ ] Implement a sliding window buffer over the sanitized output.
+    - [ ] Match buffer contents against the Driver's "Prompt Regex".
+    - [ ] Add a `tokio::time::timeout` heuristic: If stream is silent for 500ms after a specific newline pattern, assume generation is complete.
 
-## Phase 3: Driver Profiles & The Orchestrator
-- [ ] **Driver Configuration:**
-    - [ ] Define the `AgentDriver` schema (Path to executable, startup flags, prompt regex).
-    - [ ] Create pre-configured profiles for popular free CLIs (Gemini, Claude, Cursor, Aider).
-- [ ] **The Message Bus:**
-    - [ ] Implement the central `tokio` event bus.
-    - [ ] Tag routing: If user types `@gemini hello`, route `hello` exclusively to the Gemini PTY's `stdin`.
+## Phase 3: The Unified TUI & Multiplexing
+- [ ] **The "Command Center" UI:**
+    - [ ] Build a multi-pane `ratatui` interface (Chat History, Input Box, Status Sidebar).
+    - [ ] Implement auto-scrolling and word-wrapping for incoming agent text.
+- [ ] **Tag Router (`@agent`):**
+    - [ ] Parse user input for tags.
+    - [ ] Dispatch messages exclusively to the matched PTY's `stdin`.
+- [ ] **LLM Racing (Hook Feature 1):**
+    - [ ] Implement UI for split-pane parallel streaming.
+    - [ ] Allow multiple tags (`@gemini @claude code a button`).
+    - [ ] Route the single string to multiple PTYs simultaneously and manage concurrent UI updates.
 
-## Phase 4: The Unified TUI (Group Chat)
-- [ ] **Chat Interface:**
-    - [ ] Scrollable message history distinguishing between User, Agent A, and Agent B.
-    - [ ] Auto-scrolling as text streams in from the PTYs.
-- [ ] **Agent Status Dashboard:**
-    - [ ] Sidebar showing active agents.
-    - [ ] State indicators: "Idle" (prompt detected), "Typing" (stream active), "Offline" (process died).
+## Phase 4: Autonomous Pipelines & The "Frankenstein" Router
+- [ ] **The Pipeline Parser:**
+    - [ ] Implement a custom mini-parser for the pipe `|` syntax in the chat box.
+- [ ] **Agent-to-Agent Handoffs:**
+    - [ ] Automatically capture the `MessageComplete` event from Agent A, wrap the output in a system string, and inject it to Agent B.
+- [ ] **Unix Integration (Hook Feature 3):**
+    - [ ] Support `> command` syntax to run standard OS commands mid-pipeline.
+    - [ ] Capture OS `stderr` and route it back to the agent PTY automatically for self-healing code loops.
 
-## Phase 5: Pipeline & Collaboration Logic
-- [ ] **Sequential Handoffs:**
-    - [ ] Logic to pipe outputs: Trigger Agent B automatically when Agent A finishes, injecting Agent A's final text into Agent B's `stdin`.
-- [ ] **Autonomous Agent Loops (The "Sparring" Match):**
-    - [ ] Setup infinite or semi-infinite loops where Agent A and Agent B continuously prompt each other (e.g., Coder vs. Reviewer).
-    - [ ] Inject wrapper prompts during handoff (e.g., "Agent B said: [Output]. Please review this and reply.").
-    - [ ] **Safety Rails:** Implement a `max_turns` limit (e.g., stop after 5 back-and-forths) and a global `Escape` hotkey to prevent them from getting stuck in an infinite "Thank you!" loop.
-- [ ] **Context Injection:**
-    - [ ] Mechanism to prepend recent chat history to a prompt before sending it to an agent, ensuring they are aware of the "group chat" context even though they are isolated processes.
+## Phase 5: The Time-Travel Workspace (Safety Engine)
+- [ ] **Shadow VFS Implementation (Hook Feature 2):**
+    - [ ] Create `.agenthub_shadow/` architecture in the project root.
+    - [ ] Before any pipeline runs, execute a hyper-fast differential copy of the working directory (excluding `.git` and `node_modules`).
+- [ ] **The Undo Mechanic:**
+    - [ ] Bind `Ctrl+Z` in the TUI to trigger the revert protocol.
+    - [ ] Restore files from the shadow directory and pop the most recent interactions off the chat history state.
 
-## Phase 6: Robustness & Edge Cases
-- [ ] **Process Lifecycle Management:**
-    - [ ] Ensure all child PTY processes are forcefully killed (`SIGKILL` / `taskkill`) when AgentHub closes to prevent orphaned background processes.
-- [ ] **Timeout & Hang Recovery:**
-    - [ ] If an agent streams nothing for X seconds, assume it crashed, kill the PTY, restart it, and notify the user.
-- [ ] **Interactive Bypasses:**
-    - [ ] Logic to auto-answer `[Y/n]` prompts that CLIs sometimes throw unexpectedly.
+## Phase 6: Zero-API Auto-Context Engine
+- [ ] **AST Indexing (Hook Feature 4):**
+    - [ ] Integrate `ignore` crate to build a list of valid workspace files.
+    - [ ] Integrate `tree-sitter` to parse definitions (functions, classes, structs) for quick lookup.
+- [ ] **Dynamic Prompt Injection:**
+    - [ ] Intercept user prompts mentioning filenames (e.g., `fix main.rs`).
+    - [ ] Read `main.rs`, minify the string, and stealthily prepend it to the text sent to the PTY.
+
+## Phase 7: Robustness & Enterprise Edge Cases
+- [ ] **Orphan Process Annihilation:**
+    - [ ] Implement panic handlers and `Drop` traits on the PTY manager to guarantee child processes (`gemini-cli`, etc.) receive `SIGKILL` when AgentHub exits.
+- [ ] **Interactive Prompt Bypassing:**
+    - [ ] Add specific Driver profile hooks to detect "Do you want to continue? [Y/n]" and automatically inject `Y\n` into the `stdin` to prevent pipeline stalls.
+- [ ] **Log Rotation & Debugging:**
+    - [ ] Maintain a raw, un-sanitized byte log for each PTY session in `/tmp/agenthub_debug/` to help users diagnose why a specific CLI driver profile is failing.
+
+## Phase 8: Polish, Packaging & Launch
+- [ ] **Configurable Keybindings:** Vim/Emacs mode support for the TUI input box.
+- [ ] **Cross-Platform PTY Testing:** Ensure `portable-pty` behaves identically on Windows (ConPTY) and Unix (pseudoterminals).
+- [ ] **Binary Distribution:** Setup GitHub actions to compile optimized binaries (`cargo build --release`) for Mac/Windows/Linux to ensure zero-friction installation.
