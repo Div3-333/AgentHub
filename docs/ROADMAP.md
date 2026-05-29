@@ -37,6 +37,10 @@ This roadmap details the engineering required to build a world-class CLI wrapper
 ## Phase 5: Pipeline & Collaboration Logic
 - [ ] **Sequential Handoffs:**
     - [ ] Logic to pipe outputs: Trigger Agent B automatically when Agent A finishes, injecting Agent A's final text into Agent B's `stdin`.
+- [ ] **Autonomous Agent Loops (The "Sparring" Match):**
+    - [ ] Setup infinite or semi-infinite loops where Agent A and Agent B continuously prompt each other (e.g., Coder vs. Reviewer).
+    - [ ] Inject wrapper prompts during handoff (e.g., "Agent B said: [Output]. Please review this and reply.").
+    - [ ] **Safety Rails:** Implement a `max_turns` limit (e.g., stop after 5 back-and-forths) and a global `Escape` hotkey to prevent them from getting stuck in an infinite "Thank you!" loop.
 - [ ] **Context Injection:**
     - [ ] Mechanism to prepend recent chat history to a prompt before sending it to an agent, ensuring they are aware of the "group chat" context even though they are isolated processes.
 
