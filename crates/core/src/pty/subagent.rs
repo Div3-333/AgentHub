@@ -45,6 +45,9 @@ pub const SUBAGENT_ROLE: &str = "Subagent";
 /// Polling interval for non-eBPF backends (blueprint §5.4).
 pub const POLL_INTERVAL_MS: u64 = 250;
 
+/// Cap auto-registered subagents per root agent (npm/node trees can spawn many PIDs).
+pub const MAX_SUBAGENTS_PER_PARENT: usize = 4;
+
 /// Phase 11 gate: `false` — polling registration is implemented.
 pub const SUBAGENT_CAPTURE_PENDING: bool = false;
 
@@ -203,7 +206,17 @@ fn sysinfo_process_parents() -> Vec<(u32, u32)> {
 }
 
 #[cfg(windows)]
+fn windows_skip_subagent_exe(exe: &str) -> bool {
+    matches!(
+        exe.to_ascii_lowercase().as_str(),
+        "conhost.exe" | "cmd.exe" | "csrss.exe" | "dwm.exe" | "fontdrvhost.exe" | "werfault.exe"
+    )
+}
+
+#[cfg(windows)]
 fn windows_process_parents() -> Vec<(u32, u32)> {
+    use std::ffi::CStr;
+
     use windows_sys::Win32::Foundation::{CloseHandle, FALSE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPPROCESS,
@@ -222,7 +235,12 @@ fn windows_process_parents() -> Vec<(u32, u32)> {
     let mut pairs = Vec::new();
     if unsafe { Process32First(snapshot, &mut entry) } != FALSE {
         loop {
-            pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            let exe = CStr::from_bytes_until_nul(&entry.szExeFile)
+                .map(|c| c.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if !windows_skip_subagent_exe(&exe) {
+                pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
+            }
             if unsafe { Process32Next(snapshot, &mut entry) } == FALSE {
                 break;
             }
@@ -256,7 +274,9 @@ fn active_agent_parents(state: &ServerState) -> HashMap<u32, (Uuid, String, Stri
         .filter_map(|entry| {
             let agent = entry.value();
             let pid = agent.pid;
-            if pid == 0 {
+            // Only root PTY agents — subagent stubs have PIDs too and would recurse
+            // (gemini-1-sub-1-sub-1-sub-1…) when npm/node spawn deep process trees.
+            if pid == 0 || !agent.has_pty_session() {
                 return None;
             }
             Some((
@@ -265,6 +285,15 @@ fn active_agent_parents(state: &ServerState) -> HashMap<u32, (Uuid, String, Stri
             ))
         })
         .collect()
+}
+
+fn subagent_count_for_parent(state: &ServerState, parent_tag: &str) -> usize {
+    let prefix = format!("{parent_tag}-sub-");
+    state
+        .agents
+        .iter()
+        .filter(|entry| entry.value().tag.starts_with(&prefix))
+        .count()
 }
 
 fn next_subagent_index(state: &ServerState, parent_tag: &str) -> u8 {
@@ -296,9 +325,23 @@ pub fn on_subagent_exec(
     }
 
     let parent = state.agents.get(&event.parent_agent_id)?;
+    if !parent.has_pty_session() {
+        return None;
+    }
     let parent_tag = parent.tag.clone();
     let parent_driver = parent.driver_name.clone();
     drop(parent);
+
+    if subagent_count_for_parent(state, &parent_tag) >= MAX_SUBAGENTS_PER_PARENT {
+        REGISTERED_CHILD_PIDS.insert(event.child_pid);
+        tracing::debug!(
+            parent = %parent_tag,
+            child_pid = event.child_pid,
+            cap = MAX_SUBAGENTS_PER_PARENT,
+            "subagent cap reached; ignoring extra child PID"
+        );
+        return None;
+    }
 
     let index = next_subagent_index(state, &parent_tag);
     let child_tag = format_subagent_tag(&parent_tag, index);
@@ -533,6 +576,71 @@ mod tests {
         assert!(
             matches!(system, BusEvent::SystemMessage { content, .. } if content.contains("mock-1-sub-1"))
         );
+    }
+
+    #[test]
+    fn active_agent_parents_ignores_subagent_stubs() {
+        let state = ServerState::new();
+        let parent_id = Uuid::new_v4();
+        let parent = mock_parent_with_pid(parent_id, "gemini-1", 10_000);
+        state.agents.insert(parent_id, parent);
+
+        let stub_id = Uuid::new_v4();
+        let stub = Arc::new(AgentPty::subagent_stub(
+            stub_id,
+            "gemini-1-sub-1".into(),
+            "gemini".into(),
+            10_001,
+            SUBAGENT_ROLE,
+            1,
+            Permissions::VIEW_CHANNEL,
+        ));
+        state.agents.insert(stub_id, stub);
+
+        let parents = super::active_agent_parents(&state);
+        assert_eq!(parents.len(), 1);
+        assert!(parents.contains_key(&10_000));
+        assert!(!parents.contains_key(&10_001));
+    }
+
+    #[test]
+    fn subagent_cap_blocks_excess_children() {
+        let state = ServerState::new();
+        let (bus_tx, _) = broadcast::channel(16);
+        let parent_id = Uuid::new_v4();
+        let parent = mock_parent_with_pid(parent_id, "gemini-1", 1000);
+        state.agents.insert(parent_id, Arc::clone(&parent));
+
+        for i in 0..super::MAX_SUBAGENTS_PER_PARENT {
+            let child_pid = 2000_u32 + i as u32;
+            assert!(
+                on_subagent_exec(
+                    &state,
+                    &bus_tx,
+                    SubagentExecEvent {
+                        parent_agent_id: parent_id,
+                        parent_pid: 1000,
+                        child_pid,
+                    },
+                )
+                .is_some(),
+                "child {child_pid} should register"
+            );
+        }
+        assert!(
+            on_subagent_exec(
+                &state,
+                &bus_tx,
+                SubagentExecEvent {
+                    parent_agent_id: parent_id,
+                    parent_pid: 1000,
+                    child_pid: 2999,
+                },
+            )
+            .is_none(),
+            "over cap should be ignored"
+        );
+        assert_eq!(subagent_count_for_parent(&state, "gemini-1"), 4);
     }
 
     #[test]

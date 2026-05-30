@@ -2,15 +2,21 @@
   "name": "gemini",
   "display_name": "Gemini CLI",
   "executable": "gemini",
-  "args": [],
-  "env": { "NO_COLOR": "1", "TERM": "dumb" },
+  "args": ["--skip-trust"],
+  "env": {
+    "NO_COLOR": "1",
+    "TERM": "dumb",
+    "GEMINI_CLI_TRUST_WORKSPACE": "true"
+  },
   "prompt_regex": "^>\\s*$",
   "silence_timeout_ms": 5000,
   "init_sequence": [],
   "rate_limit_patterns": ["rate limit", "quota exceeded", "429"],
   "auto_reply_patterns": {
     "Do you want to continue\\? \\[Y/n\\]": "Y\n",
-    "Press Enter to continue": "\n"
+    "Press Enter to continue": "\n",
+    "Do you trust the files in this folder": "1\n",
+    "Trust folder \\(": "1\n"
   },
   "supports_multi_instance": true,
   "max_instances": 0

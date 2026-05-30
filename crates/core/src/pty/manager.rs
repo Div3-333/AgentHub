@@ -158,6 +158,22 @@ impl AgentPty {
         Arc::clone(&self.ring_buffer)
     }
 
+    /// True for a live spawned CLI (PTY or stdio child), not a subagent PID stub.
+    #[must_use]
+    pub fn has_pty_session(&self) -> bool {
+        let has_writer = self
+            .writer
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|_| ()));
+        let has_child = self
+            .child
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|_| ()));
+        has_writer.is_some() || has_child.is_some()
+    }
+
     /// Stub PTY record for a detected child process (no master/writer; §5.4 subagents).
     pub(crate) fn subagent_stub(
         id: Uuid,

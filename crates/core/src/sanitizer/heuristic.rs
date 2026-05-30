@@ -92,6 +92,23 @@ impl AutoReplies {
         }
         None
     }
+
+    /// Like [`Self::match_reply`] but scans every non-empty line (multi-line TUI prompts).
+    #[must_use]
+    pub fn match_reply_any_line(&self, extracted_text: &str) -> Option<(&str, &str)> {
+        for line in extracted_text.lines() {
+            let trimmed = line.trim_end_matches('\r').trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            for (regex, reply) in &self.entries {
+                if regex.is_match(trimmed) {
+                    return Some((regex.as_str(), reply.as_str()));
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Pending 100ms confirmation after a prompt-regex match (blueprint §6.2).
@@ -185,7 +202,10 @@ fn complete_turn(
 }
 
 fn try_auto_reply(agent: &AgentPty, auto_replies: &AutoReplies, extracted_text: &str) -> bool {
-    let Some((pattern, reply)) = auto_replies.match_reply(extracted_text) else {
+    let Some((pattern, reply)) = auto_replies
+        .match_reply(extracted_text)
+        .or_else(|| auto_replies.match_reply_any_line(extracted_text))
+    else {
         return false;
     };
     match agent.write_stdin(reply.as_bytes()) {
@@ -410,6 +430,21 @@ mod tests {
             .expect("match");
         assert!(pattern.contains("Continue"));
         assert_eq!(reply, "Y\n");
+    }
+
+    #[test]
+    fn auto_reply_any_line_matches_trust_folder_prompt() {
+        let mut driver = sample_driver("^>\\s*$");
+        driver.auto_reply_patterns.insert(
+            "Do you trust the files in this folder".to_string(),
+            "1\n".to_string(),
+        );
+        let replies = AutoReplies::from_driver(&driver).expect("patterns");
+        let text = "│ Do you trust the files in this folder?          │\n│ 1. Trust folder (Downloads)                     │\n";
+        let (_, reply) = replies
+            .match_reply_any_line(text)
+            .expect("trust prompt");
+        assert_eq!(reply, "1\n");
     }
 
     #[test]
