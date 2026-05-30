@@ -21,8 +21,10 @@
 | Help-slash | `/help` + command catalog in TUI |
 | Seal-audit | Part 19 checklist + fix stragglers |
 
-**Lead verify (Windows, `AGENTHUB_SKIP_PTY=1`):** `cargo test --workspace --all-features` ✅ · `cargo clippy --workspace --all-features -- -D warnings` ✅
+## Horde results (14 agents, parallel) — **v0.2 landed**
 
-**Remaining for maintainer:** push `v0.1.0` tag → confirm GitHub Actions green on 3 OS → attach release binaries.
+Lead: `/undo`, `/spar`, pipeline-on-submit, auto-context on bus, `agenthub --version`, version **0.2.0**.
 
-**Honest v0.1 scope:** see `docs/ROADMAP.md` — `/undo`, `/spar`, chat pipelines, auto-context inject are v0.2 (library ready, TUI slash path not wired).
+**Verify:** `cargo test --workspace --all-features` + `cargo clippy --workspace --all-features -- -D warnings`
+
+**Release:** `git tag v0.2.0 && git push origin v0.2.0` for binaries.

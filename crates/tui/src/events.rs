@@ -28,6 +28,7 @@ pub const SLASH_COMMANDS: &[&str] = &[
     "/setprompt",
     "/snapshot",
     "/undo",
+    "/channel",
     "/spar",
 ];
 
@@ -54,7 +55,10 @@ Slash commands (blueprint §8.3):
                           Start agent via driver
   /setprompt @tag text    Inject system prompt into agent PTY
   /snapshot               Manual VFS workspace snapshot
-  /undo                   Revert workspace to latest snapshot
+  /undo                   Revert workspace to latest snapshot (Y/n confirm)
+  /undo --yes             Revert immediately without confirmation
+  /channel create|delete|assign|remove|list
+                          Manage Server-mode channels
   /spar @a as R vs @b as R [--turns N] [--goal "…"]
                           Autonomous two-agent sparring session
 
@@ -91,6 +95,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 
     if app.overlay == Overlay::QuitConfirm {
         return handle_quit_confirm(app, key);
+    }
+
+    if app.overlay == Overlay::RevertConfirm {
+        return handle_revert_confirm(app, key);
     }
 
     if app.overlay == Overlay::Racing {
@@ -150,7 +158,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
             app.agent_list_selected = 0;
         }
         KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            route_slash_command(app, "/undo");
+            begin_revert_confirm(app);
         }
         KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.overlay = Overlay::SavePath;
@@ -448,6 +456,11 @@ pub fn route_slash_command(app: &mut App, line: &str) {
         return;
     }
 
+    if is_interactive_undo(trimmed) {
+        begin_revert_confirm(app);
+        return;
+    }
+
     if let Some(bridge) = app.core.clone() {
         match block_on(dispatch_slash_core(&bridge, trimmed)) {
             Ok(msg) => app.apply_command_result(msg),
@@ -482,9 +495,117 @@ async fn dispatch_slash_core(
 
 fn route_slash_command_local(app: &mut App, line: &str) {
     let cmd = line.split_whitespace().next().unwrap_or(line);
+    if is_interactive_undo(line) {
+        app.apply_command_result(
+            "Revert requires a live AgentHub session with snapshots. Run the `agenthub` binary."
+                .into(),
+        );
+        return;
+    }
     app.apply_command_result(format!(
         "Command {cmd} requires a live AgentHub session. Run the `agenthub` binary (not the preview UI)."
     ));
+}
+
+fn is_interactive_undo(line: &str) -> bool {
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    parts
+        .first()
+        .is_some_and(|cmd| cmd.eq_ignore_ascii_case("/undo"))
+        && !parts.iter().any(|p| *p == "--yes" || *p == "-y")
+}
+
+pub fn begin_revert_confirm(app: &mut App) {
+    let Some(bridge) = app.core.clone() else {
+        app.apply_command_result(
+            "Revert requires a live AgentHub session. Run the `agenthub` binary.".into(),
+        );
+        return;
+    };
+
+    match block_on(async { agenthub_core::vfs::preview_revert(&bridge.db.pool, &bridge.cwd).await })
+    {
+        Ok(preview) => {
+            app.status_message = agenthub_core::vfs::revert_confirmation_message(
+                preview.snapshot_id,
+                preview.file_count,
+                &preview.elapsed_label,
+            );
+            app.revert_dialog = Some(crate::app::RevertDialogState {
+                preview,
+                step: crate::app::RevertDialogStep::ConfirmRevert,
+            });
+            app.overlay = Overlay::RevertConfirm;
+        }
+        Err(e) => app.apply_command_result(format!("Error: {e}")),
+    }
+}
+
+fn handle_revert_confirm(app: &mut App, key: KeyEvent) -> bool {
+    let Some(dialog) = app.revert_dialog.clone() else {
+        app.overlay = Overlay::None;
+        return false;
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.overlay = Overlay::None;
+            app.revert_dialog = None;
+            app.status_message = "Revert cancelled.".into();
+        }
+        KeyCode::Char('n') | KeyCode::Char('N') => match dialog.step {
+            crate::app::RevertDialogStep::ConfirmRevert => {
+                app.overlay = Overlay::None;
+                app.revert_dialog = None;
+                app.status_message = "Revert cancelled.".into();
+            }
+            crate::app::RevertDialogStep::ConfirmDeleteNewFiles => {
+                finish_revert(app, false);
+            }
+        },
+        KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => match dialog.step {
+            crate::app::RevertDialogStep::ConfirmRevert => {
+                if dialog.preview.new_files_count > 0 {
+                    app.status_message = agenthub_core::vfs::delete_new_files_message(
+                        dialog.preview.new_files_count,
+                    );
+                    app.revert_dialog = Some(crate::app::RevertDialogState {
+                        preview: dialog.preview,
+                        step: crate::app::RevertDialogStep::ConfirmDeleteNewFiles,
+                    });
+                } else {
+                    finish_revert(app, false);
+                }
+            }
+            crate::app::RevertDialogStep::ConfirmDeleteNewFiles => {
+                finish_revert(app, true);
+            }
+        },
+        _ => {}
+    }
+    false
+}
+
+fn finish_revert(app: &mut App, delete_new_files: bool) {
+    let Some(bridge) = app.core.clone() else {
+        app.overlay = Overlay::None;
+        app.revert_dialog = None;
+        return;
+    };
+
+    match block_on(agenthub_core::vfs::execute_revert(
+        &bridge.db,
+        &bridge.config,
+        &bridge.cwd,
+        delete_new_files,
+        Some(&bridge.bus_tx),
+        Some(&bridge.moderation.state),
+    )) {
+        Ok(msg) => app.apply_command_result(msg),
+        Err(e) => app.apply_command_result(format!("Error: {e}")),
+    }
+    app.overlay = Overlay::None;
+    app.revert_dialog = None;
 }
 
 fn block_on<F: Future>(future: F) -> F::Output {

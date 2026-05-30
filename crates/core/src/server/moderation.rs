@@ -88,6 +88,7 @@ pub async fn execute_command(ctx: &ModerationContext, line: &str) -> Result<Stri
         "setprompt" => cmd_setprompt(ctx, &parts[1..]).await,
         "spawn" => cmd_spawn(ctx, &parts[1..]).await,
         "spar" => cmd_spar(ctx, line).await,
+        "channel" => cmd_channel(ctx, &parts[1..]).await,
         other => Err(AgentHubError::Config(format!("unknown command: /{other}"))),
     }
 }
@@ -595,6 +596,94 @@ async fn cmd_spar(ctx: &ModerationContext, line: &str) -> Result<String> {
         "[Spar]: Completed {} turns. Last: {}",
         result.turns_completed, result.last_output
     ))
+}
+
+async fn cmd_channel(ctx: &ModerationContext, args: &[&str]) -> Result<String> {
+    let sub = args.first().copied().unwrap_or("list");
+    match sub {
+        "create" => {
+            let name = args
+                .get(1)
+                .copied()
+                .ok_or_else(|| AgentHubError::Config("usage: /channel create <name>".into()))?;
+            modes::create_channel(&ctx.state, name)?;
+            Ok(format!("[Server]: Channel #{name} created."))
+        }
+        "delete" => {
+            let name = args
+                .get(1)
+                .copied()
+                .ok_or_else(|| AgentHubError::Config("usage: /channel delete <name>".into()))?;
+            modes::delete_channel(&ctx.state, name)?;
+            Ok(format!("[Server]: Channel #{name} deleted."))
+        }
+        "assign" => {
+            let tag = args.get(1).copied().ok_or_else(|| {
+                AgentHubError::Config("usage: /channel assign @{tag} [to] <channel>".into())
+            })?;
+            let channel = if args.get(2) == Some(&"to") {
+                args.get(3).copied()
+            } else {
+                args.get(2).copied()
+            }
+            .ok_or_else(|| {
+                AgentHubError::Config("usage: /channel assign @{tag} [to] <channel>".into())
+            })?;
+            let (id, agent) = resolve_tag(&ctx.state, tag)?;
+            modes::assign_agent_to_channel(&ctx.state, channel, id)?;
+            Ok(format!(
+                "[Server]: Assigned @{} to #{}.",
+                agent.tag, channel
+            ))
+        }
+        "remove" => {
+            let tag = args.get(1).copied().ok_or_else(|| {
+                AgentHubError::Config("usage: /channel remove @{tag} [from] <channel>".into())
+            })?;
+            let channel = if args.get(2) == Some(&"from") {
+                args.get(3).copied()
+            } else {
+                args.get(2).copied()
+            }
+            .ok_or_else(|| {
+                AgentHubError::Config("usage: /channel remove @{tag} [from] <channel>".into())
+            })?;
+            let (id, agent) = resolve_tag(&ctx.state, tag)?;
+            modes::remove_agent_from_channel(&ctx.state, channel, id)?;
+            Ok(format!(
+                "[Server]: Removed @{} from #{}.",
+                agent.tag, channel
+            ))
+        }
+        "list" => {
+            if !modes::channels_enabled(modes::get_mode(&ctx.state)) {
+                return Err(AgentHubError::Config(
+                    "channels are only available in Server mode (try /mode server)".into(),
+                ));
+            }
+            if ctx.state.channels.is_empty() {
+                return Ok("[Server]: No channels yet. Use /channel create <name>.".into());
+            }
+            let mut lines = vec!["[Server]: Channels:".into()];
+            for entry in ctx.state.channels.iter() {
+                let members: Vec<String> = entry
+                    .value()
+                    .iter()
+                    .filter_map(|id| ctx.state.agents.get(id).map(|a| format!("@{}", a.tag)))
+                    .collect();
+                let member_text = if members.is_empty() {
+                    "(empty)".into()
+                } else {
+                    members.join(", ")
+                };
+                lines.push(format!("  #{} — {member_text}", entry.key()));
+            }
+            Ok(lines.join("\n"))
+        }
+        other => Err(AgentHubError::Config(format!(
+            "unknown /channel subcommand: {other} (try create, delete, assign, remove, list)"
+        ))),
+    }
 }
 
 async fn cmd_setprompt(ctx: &ModerationContext, args: &[&str]) -> Result<String> {

@@ -350,14 +350,8 @@ mod tests {
         state.agents.insert(a2.id, a2);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "hello all".into(),
             timestamp: Utc::now(),
@@ -388,14 +382,8 @@ mod tests {
         state.agents.insert(deafened.id, deafened);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "broadcast check".into(),
             timestamp: Utc::now(),
@@ -423,14 +411,8 @@ mod tests {
         state.agents.insert(other.id, other);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "@gemini-1 direct ping".into(),
             timestamp: Utc::now(),
@@ -459,14 +441,8 @@ mod tests {
         state.agents.insert(claude_id, claude);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::AgentMessage {
             id: claude_id,
             tag: "claude-2".into(),
@@ -496,14 +472,8 @@ mod tests {
         state.agents.insert(a2.id, a2);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "@mock-1 @mock-2 write tests".into(),
             timestamp: Utc::now(),
@@ -557,14 +527,8 @@ mod tests {
         state.agents.insert(suspended.id, suspended);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "room broadcast".into(),
             timestamp: Utc::now(),
@@ -592,14 +556,8 @@ mod tests {
         state.agents.insert(b.id, b);
 
         let (cwd, config, index) = test_router_env();
-        let channels = spawn_bus_router(
-            Arc::clone(&state),
-            None,
-            Uuid::new_v4(),
-            cwd,
-            config,
-            index,
-        );
+        let channels =
+            spawn_bus_router(Arc::clone(&state), None, Uuid::new_v4(), cwd, config, index);
         let _ = channels.bus_tx.send(BusEvent::UserMessage {
             content: "stagger probe".into(),
             timestamp: Utc::now(),

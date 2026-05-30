@@ -41,6 +41,45 @@ struct SnapshotRow {
     id: Uuid,
 }
 
+struct SnapshotMeta {
+    id: Uuid,
+    timestamp: i64,
+    file_count: i64,
+}
+
+/// Summary shown before an interactive revert (TUI confirmation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevertPreview {
+    pub snapshot_id: Uuid,
+    pub file_count: usize,
+    pub new_files_count: usize,
+    pub elapsed_label: String,
+}
+
+/// Load metadata for the revert confirmation dialog.
+pub async fn preview_revert(pool: &SqlitePool, cwd: &Path) -> Result<RevertPreview> {
+    let meta = load_latest_snapshot_meta(pool, cwd).await?;
+    let new_files_count = count_new_files_for_latest(pool, cwd).await?;
+    Ok(RevertPreview {
+        snapshot_id: meta.id,
+        file_count: usize::try_from(meta.file_count).unwrap_or(0),
+        new_files_count,
+        elapsed_label: format_elapsed_since(meta.timestamp),
+    })
+}
+
+fn format_elapsed_since(timestamp_ms: i64) -> String {
+    let now = chrono::Utc::now().timestamp_millis();
+    let delta_ms = (now - timestamp_ms).max(0);
+    if delta_ms < 60_000 {
+        format!("{}s", delta_ms / 1000)
+    } else if delta_ms < 3_600_000 {
+        format!("{}m", delta_ms / 60_000)
+    } else {
+        format!("{}h", delta_ms / 3_600_000)
+    }
+}
+
 #[derive(sqlx::FromRow)]
 struct ManifestRow {
     rel_path: String,
@@ -48,10 +87,13 @@ struct ManifestRow {
     status: String,
 }
 
-/// True when `input` is the manual `/undo` slash command.
+/// True when `input` is a `/undo` slash command (with optional flags).
 #[must_use]
 pub fn is_undo_command(input: &str) -> bool {
-    matches!(input.trim(), "/undo" | "/UNDO") || input.trim().eq_ignore_ascii_case("/undo")
+    input
+        .split_whitespace()
+        .next()
+        .is_some_and(|cmd| cmd.eq_ignore_ascii_case("/undo"))
 }
 
 /// User-facing confirmation before revert (blueprint §12.2 step 2).
@@ -182,11 +224,11 @@ pub async fn revert_latest(
     Ok(result)
 }
 
-async fn load_latest_snapshot(pool: &SqlitePool, cwd: &Path) -> Result<SnapshotRow> {
+async fn load_latest_snapshot_meta(pool: &SqlitePool, cwd: &Path) -> Result<SnapshotMeta> {
     let cwd_str = cwd.to_string_lossy();
-    let row: Option<(String,)> = sqlx::query_as(
+    let row: Option<(String, i64, i64)> = sqlx::query_as(
         r"
-        SELECT id FROM snapshots
+        SELECT id, timestamp, file_count FROM snapshots
         WHERE cwd = ?
         ORDER BY timestamp DESC
         LIMIT 1
@@ -196,13 +238,20 @@ async fn load_latest_snapshot(pool: &SqlitePool, cwd: &Path) -> Result<SnapshotR
     .fetch_optional(pool)
     .await?;
 
-    let (id,) =
+    let (id, timestamp, file_count) =
         row.ok_or_else(|| AgentHubError::Revert("no snapshot found for workspace".into()))?;
-
     let id = Uuid::parse_str(&id)
         .map_err(|e| AgentHubError::Revert(format!("invalid snapshot id in db: {e}")))?;
+    Ok(SnapshotMeta {
+        id,
+        timestamp,
+        file_count,
+    })
+}
 
-    Ok(SnapshotRow { id })
+async fn load_latest_snapshot(pool: &SqlitePool, cwd: &Path) -> Result<SnapshotRow> {
+    let meta = load_latest_snapshot_meta(pool, cwd).await?;
+    Ok(SnapshotRow { id: meta.id })
 }
 
 async fn load_manifest(pool: &SqlitePool, snapshot_id: Uuid) -> Result<Vec<ManifestRow>> {

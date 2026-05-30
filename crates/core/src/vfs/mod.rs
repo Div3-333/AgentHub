@@ -16,8 +16,9 @@ use crate::error::{AgentHubError, Result};
 use crate::server::ServerState;
 
 pub use revert::{
-    freeze_agent_pids, is_undo_command, resume_agent_pids, revert_success_message, RevertOptions,
-    RevertResult,
+    delete_new_files_message, freeze_agent_pids, is_undo_command, preview_revert,
+    resume_agent_pids, revert_confirmation_message, revert_success_message, RevertOptions,
+    RevertPreview, RevertResult,
 };
 pub use snapshot::{
     create_snapshot, create_snapshot_with_config, is_snapshot_command, resolve_shadow_dir,
@@ -169,24 +170,49 @@ pub async fn handle_slash_command(
     }
 
     if revert::is_undo_command(input) {
-        let shadow = snapshot::resolve_shadow_dir(config, cwd);
-        let pids = state.map(collect_agent_pids).unwrap_or_default();
-        let result = revert::revert_latest(
-            &db.pool,
-            cwd,
-            &shadow,
-            RevertOptions {
-                delete_new_files: true,
-                dry_run: false,
-            },
-            &pids,
-            bus_tx,
-        )
-        .await?;
-        return Ok(Some(revert_success_message(result.files_restored)));
+        if is_undo_yes_command(input) {
+            return execute_revert(db, config, cwd, true, bus_tx, state)
+                .await
+                .map(Some);
+        }
+        return Ok(None);
     }
 
     Ok(None)
+}
+
+/// Runs revert with explicit options (TUI confirmation or `/undo --yes`).
+pub async fn execute_revert(
+    db: &DbClient,
+    config: &AgentHubConfig,
+    cwd: &Path,
+    delete_new_files: bool,
+    bus_tx: Option<&broadcast::Sender<BusEvent>>,
+    state: Option<&ServerState>,
+) -> Result<String> {
+    let shadow = snapshot::resolve_shadow_dir(config, cwd);
+    let pids = state.map(collect_agent_pids).unwrap_or_default();
+    let result = revert::revert_latest(
+        &db.pool,
+        cwd,
+        &shadow,
+        RevertOptions {
+            delete_new_files,
+            dry_run: false,
+        },
+        &pids,
+        bus_tx,
+    )
+    .await?;
+    Ok(revert_success_message(result.files_restored))
+}
+
+fn is_undo_yes_command(input: &str) -> bool {
+    let parts: Vec<&str> = input.split_whitespace().collect();
+    parts
+        .first()
+        .is_some_and(|cmd| cmd.eq_ignore_ascii_case("/undo"))
+        && parts.iter().any(|p| *p == "--yes" || *p == "-y")
 }
 
 #[cfg(any(feature = "full", feature = "bus-tests"))]

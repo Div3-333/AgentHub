@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agenthub"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "agenthub-core",
  "agenthub-tui",
@@ -24,7 +24,7 @@ dependencies = [
 
 [[package]]
 name = "agenthub-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "bitflags 2.11.1",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "agenthub-integration"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "agenthub",
  "agenthub-core",
@@ -86,7 +86,7 @@ dependencies = [
 
 [[package]]
 name = "agenthub-tui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "agenthub-core",
  "anyhow",
@@ -1327,7 +1327,7 @@ dependencies = [
 
 [[package]]
 name = "mock-cli"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "native-tls"

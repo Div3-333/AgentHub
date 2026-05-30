@@ -164,6 +164,7 @@ pub enum AppState {
     Search,
     Help,
     QuitConfirm,
+    RevertConfirm,
     Racing,
     SpawnDialog,
     AgentList,
@@ -175,10 +176,24 @@ pub enum Overlay {
     None,
     Help,
     QuitConfirm,
+    RevertConfirm,
     Racing,
     SpawnDialog,
     AgentList,
     SavePath,
+}
+
+/// Two-step revert confirmation (overwrite, then optional delete-new-files).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RevertDialogStep {
+    ConfirmRevert,
+    ConfirmDeleteNewFiles,
+}
+
+#[derive(Debug, Clone)]
+pub struct RevertDialogState {
+    pub preview: agenthub_core::vfs::RevertPreview,
+    pub step: RevertDialogStep,
 }
 
 /// Which pane receives arrow-key style navigation.
@@ -208,6 +223,7 @@ pub struct App {
     pub spar_active: bool,
     pub should_quit: bool,
     pub status_message: String,
+    pub revert_dialog: Option<RevertDialogState>,
     pub term_cols: u16,
     pub term_rows: u16,
     /// When set, `/commands` route to [`agenthub_core::server::moderation`].
@@ -226,6 +242,7 @@ impl App {
         match self.overlay {
             Overlay::Help => AppState::Help,
             Overlay::QuitConfirm => AppState::QuitConfirm,
+            Overlay::RevertConfirm => AppState::RevertConfirm,
             Overlay::SpawnDialog => AppState::SpawnDialog,
             Overlay::AgentList => AppState::AgentList,
             Overlay::SavePath => AppState::SavePath,
@@ -257,10 +274,15 @@ impl App {
                 Some(pipeline_viz::demo_pipeline_info()),
             )
         } else {
+            let version = env!("CARGO_PKG_VERSION");
+            let welcome = format!(
+                "AgentHub v{version} ready.\n\
+                 Quickstart: /spawn gemini | claude | codex   F1: help   F3: snapshot   Ctrl+Z: undo\n\
+                 Modes: F2 cycles DM → GroupChat → Server (/channel in Server mode)."
+            );
             let welcome = vec![ChatLine {
                 time_label: time_label_now(),
-                text: "AgentHub ready. Use /spawn <driver> to add agents (e.g. /spawn gemini)."
-                    .into(),
+                text: welcome,
                 sender: ChatSender::System,
             }];
             (welcome, Vec::<AgentEntry>::new(), 0, None)
@@ -292,6 +314,7 @@ impl App {
             spar_active: false,
             should_quit: false,
             status_message: String::new(),
+            revert_dialog: None,
             term_cols: 120,
             term_rows: 40,
             core: None,
@@ -730,6 +753,7 @@ impl App {
             return;
         }
         self.overlay = Overlay::None;
+        self.revert_dialog = None;
         self.search_mode = false;
         self.search_query.clear();
         self.spawn_buffer.clear();
@@ -803,6 +827,13 @@ impl App {
         match self.overlay {
             Overlay::Help => render_help_overlay(f, size, self.theme),
             Overlay::QuitConfirm => {}
+            Overlay::RevertConfirm => render_dialog(
+                f,
+                size,
+                self.theme,
+                " Revert Workspace ",
+                &self.status_message,
+            ),
             Overlay::SpawnDialog => render_dialog(
                 f,
                 size,
@@ -871,6 +902,8 @@ impl App {
         );
         let footer = if self.overlay == Overlay::QuitConfirm {
             "Ctrl+Q again to quit (agents killed), Esc to cancel"
+        } else if self.overlay == Overlay::RevertConfirm {
+            "Y: confirm   N / Esc: cancel"
         } else if !self.status_message.is_empty() {
             self.status_message.as_str()
         } else {
@@ -927,6 +960,8 @@ impl App {
         );
         let footer = if self.overlay == Overlay::QuitConfirm {
             "Ctrl+Q again to quit, Esc to cancel"
+        } else if self.overlay == Overlay::RevertConfirm {
+            "Y: confirm   N / Esc: cancel"
         } else {
             FOOTER_HINT
         };

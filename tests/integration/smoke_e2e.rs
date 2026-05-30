@@ -7,15 +7,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agenthub_core::bus::{spawn_bus_router, BusEvent, MessageTarget, OfflineReason};
-use agenthub_core::context::AstIndexer;
-use parking_lot::RwLock;
 use agenthub_core::config::{load_driver_profile_from_dir, AgentHubConfig, DriverProfile};
+use agenthub_core::context::AstIndexer;
 use agenthub_core::db::{DbClient, NewSession};
 use agenthub_core::pipeline::pty_bridge::spawn_agent_message_bridge;
 use agenthub_core::pty::{kill_agent, spawn_agent, PtyStatus, SpawnOptions};
 use agenthub_core::server::modes::{set_mode, WorkspaceModeId};
 use agenthub_core::server::ServerState;
 use chrono::Utc;
+use parking_lot::RwLock;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
