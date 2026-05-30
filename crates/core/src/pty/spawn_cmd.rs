@@ -1,5 +1,6 @@
 //! Resolve driver executables for PTY spawn (Windows npm/cmd shims).
 
+#[cfg(windows)]
 use std::path::{Path, PathBuf};
 
 use crate::error::{AgentHubError, Result};
@@ -21,7 +22,7 @@ pub fn resolve_spawn_command(executable: &str, driver_args: &[String]) -> Result
 
     #[cfg(windows)]
     {
-        return resolve_windows(executable, driver_args);
+        resolve_windows(executable, driver_args)
     }
 
     #[cfg(not(windows))]
