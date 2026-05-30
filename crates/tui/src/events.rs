@@ -768,10 +768,7 @@ mod tests {
     #[test]
     fn ctrl_slash_opens_search_mode() {
         let mut app = App::new("dark");
-        handle_key(
-            &mut app,
-            key_mod(KeyCode::Char('/'), KeyModifiers::CONTROL),
-        );
+        handle_key(&mut app, key_mod(KeyCode::Char('/'), KeyModifiers::CONTROL));
         assert!(app.search_mode);
     }
 
