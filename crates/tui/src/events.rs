@@ -90,6 +90,9 @@ Key bindings (Part 15.2):
 pub const SLASH_HELP: &str = TUI_HELP;
 
 /// Handle a key press; returns `true` when the app should exit.
+///
+/// Callers must pass only [`KeyEventKind::Press`] events (see `run_app` in `lib.rs`).
+/// Windows terminals also emit `Release` events that would otherwise duplicate input.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
     let viewport = app.chat_viewport_rows();
 
@@ -175,15 +178,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 app.input_cursor = 0;
             }
         }
-        KeyCode::Char('g') | KeyCode::Char('G') => {
+        KeyCode::Char('g') | KeyCode::Char('G') if app.focus == Focus::Chat => {
             app.scroll_chat_to_bottom(viewport);
         }
         KeyCode::Char('/') if app.focus == Focus::Input && app.input_buffer.is_empty() => {
             app.search_mode = true;
             app.search_query.clear();
         }
-        KeyCode::Char('j') => app.scroll_chat_down(1, viewport),
-        KeyCode::Char('k') => app.scroll_chat_up(1),
+        KeyCode::Char('j') if app.focus == Focus::Chat => app.scroll_chat_down(1, viewport),
+        KeyCode::Char('k') if app.focus == Focus::Chat => app.scroll_chat_up(1),
         KeyCode::Up => handle_up_arrow(app, viewport),
         KeyCode::Down => handle_down_arrow(app, viewport),
         KeyCode::PageDown => {
@@ -715,6 +718,16 @@ mod tests {
     }
 
     #[test]
+    fn input_focus_typing_j_inserts_without_vim_scroll() {
+        let mut app = App::new("dark");
+        assert_eq!(app.focus, Focus::Input);
+        let scroll_before = app.chat_scroll;
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert_eq!(app.input_buffer, "j");
+        assert_eq!(app.chat_scroll, scroll_before);
+    }
+
+    #[test]
     fn tab_complete_fills_slash_command() {
         let mut app = App::new("dark");
         app.input_buffer = "/mu".into();
@@ -786,6 +799,7 @@ mod tests {
     fn part15_navigation_keys_scroll_chat() {
         let mut app = App::new("dark");
         fill_chat_for_scroll(&mut app);
+        app.focus = Focus::Chat;
         let viewport = app.chat_viewport_rows();
         handle_key(&mut app, key(KeyCode::Char('j')));
         assert!(app.chat_scroll > 0);
