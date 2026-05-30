@@ -58,6 +58,25 @@ pub fn render(
     frame.render_widget(paragraph, area);
 }
 
+/// Wrapped display rows for all chat lines (must match [`render`] scroll math).
+#[must_use]
+pub fn total_rendered_rows(lines: &[ChatLine], inner_width: usize) -> usize {
+    if inner_width == 0 {
+        return lines.len();
+    }
+    lines
+        .iter()
+        .map(|line| wrapped_row_count(line, inner_width))
+        .sum()
+}
+
+fn wrapped_row_count(line: &ChatLine, inner_width: usize) -> usize {
+    let prefix_len = format!("[{}] ", line.time_label).len();
+    let body_width = inner_width.saturating_sub(prefix_len);
+    let rows = wrap_plain_text(&line.text, body_width, Style::default()).len();
+    rows.max(1)
+}
+
 fn format_chat_line(
     line: &ChatLine,
     width: usize,
@@ -166,4 +185,21 @@ fn highlight_substring(
         spans.push(Span::styled(text.to_string(), base));
     }
     spans
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{ChatLine, ChatSender};
+
+    #[test]
+    fn total_rendered_rows_counts_wrapped_lines() {
+        let lines = vec![ChatLine {
+            time_label: "12:00:00".into(),
+            text: "word ".repeat(80),
+            sender: ChatSender::System,
+        }];
+        let one = total_rendered_rows(&lines, 40);
+        assert!(one > 1, "long line should wrap to multiple rows");
+    }
 }

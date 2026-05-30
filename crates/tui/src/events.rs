@@ -69,6 +69,9 @@ Key bindings (Part 15.2):
   PgDn / PgUp           Scroll one page
   G                     Jump to latest message (any time)
   F4                    Toggle chat scroll vs input typing
+  F7                    Copy session (chat + agents) to clipboard
+  Wheel / PgUp / PgDn   Scroll chat (↑↓ also scroll when chat focused)
+  Shift+↑ / Shift+↓     Scroll chat while typing in input
   Ctrl+/                Search chat history
   Esc                   Cancel overlay / search / racing
   Enter                 Send message or run slash command
@@ -95,7 +98,7 @@ pub fn handle_mouse_click(app: &mut App, col: u16, row: u16) {
     match app.hit_test(col, row) {
         Some(crate::app::PaneTarget::Chat) => {
             app.focus = Focus::Chat;
-            app.status_message = "Chat scroll (j/k/G) — F4 back to input".into();
+            app.status_message = "Chat scroll (wheel/j/k/G) — F4 back to input".into();
         }
         Some(crate::app::PaneTarget::Input) => {
             app.focus = Focus::Input;
@@ -106,6 +109,33 @@ pub fn handle_mouse_click(app: &mut App, col: u16, row: u16) {
             app.status_message.clear();
         }
         None => {}
+    }
+}
+
+/// Mouse wheel / trackpad scroll over chat (and sidebar); click still changes focus.
+pub fn handle_mouse(app: &mut App, event: crossterm::event::MouseEvent) {
+    use crossterm::event::{MouseButton, MouseEventKind};
+
+    match event.kind {
+        MouseEventKind::ScrollUp => scroll_chat_by_wheel(app, event.column, event.row, -3),
+        MouseEventKind::ScrollDown => scroll_chat_by_wheel(app, event.column, event.row, 3),
+        MouseEventKind::Down(MouseButton::Left) => handle_mouse_click(app, event.column, event.row),
+        _ => {}
+    }
+}
+
+fn scroll_chat_by_wheel(app: &mut App, col: u16, row: u16, lines: i32) {
+    if matches!(app.hit_test(col, row), Some(crate::app::PaneTarget::Input)) {
+        return;
+    }
+    let viewport = app.chat_viewport_rows();
+    if lines < 0 {
+        app.scroll_chat_up((-lines) as usize);
+    } else {
+        app.scroll_chat_down(lines as usize, viewport);
+    }
+    if matches!(app.hit_test(col, row), Some(crate::app::PaneTarget::Chat)) {
+        app.focus = Focus::Chat;
     }
 }
 
@@ -178,10 +208,20 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 Focus::Chat => Focus::Input,
             };
             app.status_message = match app.focus {
-                Focus::Chat => "Chat scroll (j/k/G) — F4 back to input".into(),
+                Focus::Chat => "Chat scroll (wheel/j/k/G) — F4 back to input".into(),
                 Focus::Input => "Input focus — F4 for chat scroll".into(),
             };
         }
+        KeyCode::F(7) => match app.copy_session_to_clipboard() {
+            Ok(bytes) => {
+                app.status_message = format!(
+                    "Copied {bytes} bytes to clipboard + ~/.agenthub/chat_export.txt (paste anywhere)"
+                );
+            }
+            Err(e) => {
+                app.status_message = format!("Copy failed: {e} — try Ctrl+S save or F7 again");
+            }
+        },
         KeyCode::F(5) => {
             app.overlay = Overlay::SpawnDialog;
             app.spawn_buffer.clear();
@@ -215,19 +255,42 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::Char('G') if app.overlay == Overlay::None && !app.search_mode => {
             app.scroll_chat_to_bottom(viewport);
         }
-        KeyCode::Char('j') if app.focus == Focus::Chat && app.overlay == Overlay::None => {
+        KeyCode::Char('j')
+            if (app.focus == Focus::Chat || key.modifiers.contains(KeyModifiers::SHIFT))
+                && app.overlay == Overlay::None =>
+        {
             app.scroll_chat_down(1, viewport);
         }
-        KeyCode::Char('k') if app.focus == Focus::Chat && app.overlay == Overlay::None => {
+        KeyCode::Char('k')
+            if (app.focus == Focus::Chat || key.modifiers.contains(KeyModifiers::SHIFT))
+                && app.overlay == Overlay::None =>
+        {
             app.scroll_chat_up(1);
         }
-        KeyCode::Up => handle_up_arrow(app, viewport),
-        KeyCode::Down => handle_down_arrow(app, viewport),
+        KeyCode::Up => handle_up_arrow(app, key, viewport),
+        KeyCode::Down => handle_down_arrow(app, key, viewport),
         KeyCode::PageDown => {
             app.scroll_chat_down(viewport, viewport);
         }
         KeyCode::PageUp => {
             app.scroll_chat_up(viewport);
+        }
+        KeyCode::Char('e')
+            if key
+                .modifiers
+                .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+        {
+            let path = agenthub_core::config::agenthub_home()
+                .join("chat_export.txt")
+                .to_string_lossy()
+                .into_owned();
+            match app.save_chat_to_path(&path) {
+                Ok(bytes) => {
+                    let _ = app.copy_session_to_clipboard();
+                    app.status_message = format!("Exported {bytes} bytes to {path} and clipboard");
+                }
+                Err(e) => app.status_message = format!("Export failed: {e}"),
+            }
         }
         _ if app.focus == Focus::Input => {
             handle_input_keys(app, key);
@@ -239,8 +302,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
 }
 
 /// §15.2 navigation: Up scrolls chat unless input history should take precedence.
-fn handle_up_arrow(app: &mut App, _viewport: usize) {
-    if app.focus == Focus::Chat {
+fn handle_up_arrow(app: &mut App, key: KeyEvent, _viewport: usize) {
+    if app.focus == Focus::Chat || key.modifiers.contains(KeyModifiers::SHIFT) {
         app.scroll_chat_up(1);
         return;
     }
@@ -252,8 +315,8 @@ fn handle_up_arrow(app: &mut App, _viewport: usize) {
 }
 
 /// §15.2: Down scrolls chat when the input box is empty; otherwise input history.
-fn handle_down_arrow(app: &mut App, viewport: usize) {
-    if app.focus == Focus::Chat {
+fn handle_down_arrow(app: &mut App, key: KeyEvent, viewport: usize) {
+    if app.focus == Focus::Chat || key.modifiers.contains(KeyModifiers::SHIFT) {
         app.scroll_chat_down(1, viewport);
         return;
     }

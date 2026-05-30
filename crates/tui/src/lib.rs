@@ -5,6 +5,7 @@
 //!   [`agenthub_core::bus::spawn_bus_router`].
 
 pub mod app;
+pub mod clipboard;
 pub mod components;
 pub mod events;
 pub mod theme;
@@ -15,7 +16,7 @@ pub use components::racing;
 use agenthub_core::bus::BusEvent;
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind, MouseEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -120,11 +121,7 @@ fn run_app(
                     }
                 }
                 Event::Resize(cols, rows) => app.update_terminal_size(cols, rows),
-                Event::Mouse(m)
-                    if m.kind == MouseEventKind::Down(crossterm::event::MouseButton::Left) =>
-                {
-                    events::handle_mouse_click(app, m.column, m.row);
-                }
+                Event::Mouse(m) => events::handle_mouse(app, m),
                 _ => {}
             }
         }

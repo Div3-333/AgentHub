@@ -41,7 +41,7 @@ pub struct CoreBridge {
 }
 
 pub const FOOTER_HINT: &str =
-    "F1:Help  F4:Scroll  Ctrl+/:Search  F5:Spawn  Ctrl+Z:Undo  Ctrl+R:Race  Esc:Cancel";
+    "F1:Help  F4:Scroll  F7:Copy  Wheel:Scroll  Ctrl+/:Search  F5:Spawn  Esc:Cancel";
 
 /// F1 overlay and `/help` share [`crate::events::TUI_HELP`].
 pub use crate::events::TUI_HELP as HELP_TEXT;
@@ -287,6 +287,7 @@ impl App {
             let welcome = format!(
                 "AgentHub v{version} ready.\n\
                  Quickstart: /spawn gemini | claude | codex | aider   F1: help   F3: snapshot   Ctrl+Z: undo\n\
+                 F7: copy session to clipboard (+ ~/.agenthub/chat_export.txt)   F4 / wheel: scroll chat\n\
                  Set \"spawn_debug\": true in ~/.agenthub/config.json for live PTY I/O in chat.\n\
                  Modes: F2 cycles DM → GroupChat → Server (/channel in Server mode)."
             );
@@ -351,6 +352,16 @@ impl App {
         self.chat_visible_rows(areas.chat.height)
     }
 
+    /// Inner width of the chat pane (matches [`components::chat::render`]).
+    pub fn chat_inner_width(&self) -> usize {
+        let areas = self.layout_areas();
+        areas.chat.width.saturating_sub(2) as usize
+    }
+
+    fn chat_rendered_row_count(&self) -> usize {
+        crate::components::chat::total_rendered_rows(&self.chat_lines, self.chat_inner_width())
+    }
+
     /// Cursor index into the string shown in the input/search widget.
     pub fn input_display_cursor(&self) -> usize {
         if self.search_mode {
@@ -388,7 +399,8 @@ impl App {
     }
 
     pub fn max_chat_scroll(&self, visible_rows: usize) -> usize {
-        self.chat_lines.len().saturating_sub(visible_rows.max(1))
+        self.chat_rendered_row_count()
+            .saturating_sub(visible_rows.max(1))
     }
 
     pub fn scroll_chat_down(&mut self, amount: usize, visible_rows: usize) {
@@ -884,13 +896,61 @@ impl App {
     }
 
     pub fn save_chat_to_path(&self, path: &str) -> std::io::Result<usize> {
-        let body: String = self
-            .chat_lines
-            .iter()
-            .map(|l| format!("[{}] {}\n", l.time_label, l.text))
-            .collect();
+        let body = self.session_plain_text();
         std::fs::write(path, &body)?;
         Ok(body.len())
+    }
+
+    /// Plain-text dump of agents + chat + status (for copy/paste and exports).
+    #[must_use]
+    pub fn session_plain_text(&self) -> String {
+        let mut out = String::new();
+        out.push_str(&format!(
+            "AgentHub v{} — {} mode\n",
+            env!("CARGO_PKG_VERSION"),
+            self.workspace_mode.label()
+        ));
+        out.push_str(&format!("Agents online: {}\n", self.agents.len()));
+        out.push_str("\n--- AGENTS ---\n");
+        if self.agents.is_empty() {
+            out.push_str("(none)\n");
+        } else {
+            for agent in &self.agents {
+                out.push_str(&format!(
+                    "@{} [{}] {} {}\n",
+                    agent.tag,
+                    agent.role,
+                    sidebar::status_glyph(agent.status),
+                    sidebar::status_label(agent.status)
+                ));
+            }
+        }
+        if !self.status_message.is_empty() {
+            out.push_str(&format!("\n--- STATUS ---\n{}\n", self.status_message));
+        }
+        out.push_str("\n--- CHAT ---\n");
+        for line in &self.chat_lines {
+            let prefix = match line.sender {
+                ChatSender::User => "User",
+                ChatSender::Agent => "Agent",
+                ChatSender::System => "System",
+            };
+            out.push_str(&format!(
+                "[{}] {}: {}\n",
+                line.time_label, prefix, line.text
+            ));
+        }
+        out
+    }
+
+    /// Copy full session text to the OS clipboard; also writes `~/.agenthub/chat_export.txt`.
+    pub fn copy_session_to_clipboard(&self) -> Result<usize, String> {
+        let text = self.session_plain_text();
+        crate::clipboard::copy_to_clipboard(&text)?;
+        let path = agenthub_core::config::agenthub_home().join("chat_export.txt");
+        std::fs::write(&path, &text)
+            .map_err(|e| format!("wrote clipboard but failed to save {}: {e}", path.display()))?;
+        Ok(text.len())
     }
 
     pub fn draw(&mut self, f: &mut Frame) {
