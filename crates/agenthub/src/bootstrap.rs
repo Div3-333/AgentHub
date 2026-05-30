@@ -217,7 +217,22 @@ pub fn run() -> anyhow::Result<()> {
 }
 
 fn init_tracing(log_level: &str) {
+    use std::fs::OpenOptions;
+    use std::sync::Mutex;
+
+    use agenthub_core::config::agenthub_home;
+
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+    let log_path = agenthub_home().join("agenthub.log");
+    if let Ok(file) = OpenOptions::new().create(true).append(true).open(&log_path) {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .with_target(false)
+            .with_ansi(false)
+            .with_writer(Mutex::new(file))
+            .try_init();
+        return;
+    }
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)

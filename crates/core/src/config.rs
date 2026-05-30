@@ -32,6 +32,9 @@ pub struct AgentHubConfig {
     /// Default: false — no PTY bytes are written to disk unless explicitly enabled.
     #[serde(default)]
     pub pty_debug_log: bool,
+    /// When true, emit live spawn steps and PTY I/O previews into the TUI chat.
+    #[serde(default)]
+    pub spawn_debug: bool,
 }
 
 impl Default for AgentHubConfig {
@@ -47,6 +50,7 @@ impl Default for AgentHubConfig {
             theme: "dark".to_string(),
             keybindings: HashMap::new(),
             pty_debug_log: false,
+            spawn_debug: false,
         }
     }
 }
@@ -129,14 +133,16 @@ impl AgentHubConfig {
 
     /// Loads configuration from `path`, creating the file with defaults if missing.
     pub fn load_from(path: &Path) -> Result<Self> {
-        if path.exists() {
+        let config = if path.exists() {
             let contents = std::fs::read_to_string(path)?;
-            parse_config_json(&contents)
+            parse_config_json(&contents)?
         } else {
             let config = Self::default();
             config.save_to(path)?;
-            Ok(config)
-        }
+            config
+        };
+        ensure_user_drivers(&config.drivers_dir)?;
+        Ok(config)
     }
 
     /// Persists configuration to [`config_path`].
@@ -237,6 +243,27 @@ impl DriverProfile {
 /// Bundled driver profiles at the repository root (`drivers/`).
 pub fn bundled_drivers_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../drivers")
+}
+
+/// Copy bundled `drivers/*.json` into `drivers_dir` when missing (release binaries).
+pub fn ensure_user_drivers(drivers_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(drivers_dir)?;
+    let bundled = bundled_drivers_dir();
+    if !bundled.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(&bundled)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let dest = drivers_dir.join(entry.file_name());
+        if !dest.exists() {
+            std::fs::copy(&path, &dest)?;
+        }
+    }
+    Ok(())
 }
 
 /// Returns `~/.agenthub/config.json` (or the platform equivalent).

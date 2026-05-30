@@ -11,6 +11,7 @@ use crate::bus::{BusEvent, OfflineReason};
 
 use super::debug_log::PtyDebugSink;
 use super::manager::{AgentPty, PtyStatus};
+use super::trace::emit_pty_io_trace;
 
 /// Ring buffer capacity: 64 KiB (power of 2, blueprint §5.3).
 pub const RING_CAPACITY: usize = 65536;
@@ -144,6 +145,7 @@ pub async fn pty_reader_task(
     ring_buffer: Arc<PtyRingBuffer>,
     bus_tx: broadcast::Sender<BusEvent>,
     debug_sink: Option<Arc<PtyDebugSink>>,
+    spawn_debug: bool,
 ) {
     loop {
         if master_pty.status.load(Ordering::Acquire) == PtyStatus::Dead as u8 {
@@ -189,6 +191,13 @@ pub async fn pty_reader_task(
         if let Some(sink) = debug_sink.as_ref() {
             sink.record(&raw_buf[..bytes_read]);
         }
+        emit_pty_io_trace(
+            &bus_tx,
+            &master_pty.tag,
+            "out",
+            &raw_buf[..bytes_read],
+            spawn_debug,
+        );
 
         let mut written = 0;
         while written < bytes_read {
@@ -210,12 +219,14 @@ pub async fn stdio_reader_task(
     ring_buffer: Arc<PtyRingBuffer>,
     bus_tx: broadcast::Sender<BusEvent>,
     debug_sink: Option<Arc<PtyDebugSink>>,
+    spawn_debug: bool,
 ) {
     let (done_tx, mut done_rx) = tokio::sync::mpsc::channel::<()>(1);
     let thread_agent = Arc::clone(&agent);
     let thread_ring = Arc::clone(&ring_buffer);
     let thread_bus = bus_tx.clone();
     let thread_debug = debug_sink;
+    let trace_enabled = spawn_debug;
 
     std::thread::spawn(move || {
         loop {
@@ -256,6 +267,13 @@ pub async fn stdio_reader_task(
             if let Some(sink) = thread_debug.as_ref() {
                 sink.record(&raw_buf[..bytes_read]);
             }
+            emit_pty_io_trace(
+                &thread_bus,
+                &thread_agent.tag,
+                "out",
+                &raw_buf[..bytes_read],
+                trace_enabled,
+            );
 
             let mut written = 0;
             while written < bytes_read {

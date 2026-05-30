@@ -2,13 +2,15 @@
   "name": "aider",
   "display_name": "Aider",
   "executable": "aider",
-  "args": [],
+  "args": ["--no-git", "--yes"],
   "env": { "NO_COLOR": "1", "TERM": "dumb" },
   "prompt_regex": "^>\\s*$",
   "silence_timeout_ms": 8000,
   "init_sequence": [],
-  "rate_limit_patterns": ["rate limit", "429"],
-  "auto_reply_patterns": {},
+  "rate_limit_patterns": ["rate limit", "429", "RateLimitError"],
+  "auto_reply_patterns": {
+    "No git repo found.*\\(Y\\)es/\\(N\\)o": "n\n"
+  },
   "supports_multi_instance": true,
   "max_instances": 0
 }

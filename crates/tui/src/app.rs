@@ -92,6 +92,7 @@ impl WorkspaceMode {
 /// Agent status indicators (blueprint §15.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentStatus {
+    Initializing,
     Idle,
     Thinking,
     Muted,
@@ -285,7 +286,8 @@ impl App {
             let version = env!("CARGO_PKG_VERSION");
             let welcome = format!(
                 "AgentHub v{version} ready.\n\
-                 Quickstart: /spawn gemini | claude | codex   F1: help   F3: snapshot   Ctrl+Z: undo\n\
+                 Quickstart: /spawn gemini | claude | codex | aider   F1: help   F3: snapshot   Ctrl+Z: undo\n\
+                 Set \"spawn_debug\": true in ~/.agenthub/config.json for live PTY I/O in chat.\n\
                  Modes: F2 cycles DM → GroupChat → Server (/channel in Server mode)."
             );
             let welcome = vec![ChatLine {
@@ -432,13 +434,61 @@ impl App {
                 self.push_bus_chat(ChatSender::System, "system", content, timestamp)
             }
             BusEvent::AgentOnline { id, tag, role } => {
-                self.agents.push(AgentEntry {
-                    id: Some(id),
-                    tag: tag.clone(),
-                    role,
-                    status: AgentStatus::Idle,
-                });
+                if let Some(a) = self
+                    .agents
+                    .iter_mut()
+                    .find(|a| a.id == Some(id) || a.tag == tag)
+                {
+                    a.id = Some(id);
+                    a.role = role;
+                    a.status = AgentStatus::Idle;
+                } else {
+                    self.agents.push(AgentEntry {
+                        id: Some(id),
+                        tag: tag.clone(),
+                        role,
+                        status: AgentStatus::Idle,
+                    });
+                }
                 self.push_chat(ChatSender::System, format!("{tag} is online"));
+            }
+            BusEvent::AgentSpawnStarted {
+                id,
+                tag,
+                driver,
+                role,
+                command_line,
+            } => {
+                if let Some(a) = self.agents.iter_mut().find(|a| a.tag == tag) {
+                    a.id = Some(id);
+                    a.role = role;
+                    a.status = AgentStatus::Initializing;
+                } else {
+                    self.agents.push(AgentEntry {
+                        id: Some(id),
+                        tag: tag.clone(),
+                        role,
+                        status: AgentStatus::Initializing,
+                    });
+                }
+                self.push_chat(
+                    ChatSender::System,
+                    format!("[Spawn] @{tag} ({driver}): `{command_line}`"),
+                );
+            }
+            BusEvent::SpawnTrace { tag, message, .. } => {
+                self.push_chat(ChatSender::System, format!("[spawn @{tag}] {message}"));
+            }
+            BusEvent::PtyIoTrace {
+                tag,
+                direction,
+                preview,
+                ..
+            } => {
+                self.push_chat(
+                    ChatSender::System,
+                    format!("[pty @{tag} {direction}] {preview}"),
+                );
             }
             BusEvent::AgentOffline { tag, .. } => {
                 if let Some(a) = self.agents.iter_mut().find(|a| a.tag == tag) {
@@ -1163,6 +1213,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 
 fn decode_agent_status(code: u8) -> AgentStatus {
     match code {
+        0 => AgentStatus::Initializing,
         1 => AgentStatus::Idle,
         2 => AgentStatus::Thinking,
         3 => AgentStatus::Muted,

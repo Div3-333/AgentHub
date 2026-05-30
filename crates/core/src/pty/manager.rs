@@ -25,7 +25,11 @@ use crate::pty::io::PtyRingBuffer;
 #[cfg(feature = "full")]
 use crate::pty::io::{pty_reader_task, stdio_reader_task};
 #[cfg(feature = "full")]
+use crate::pty::spawn_cmd::{format_resolved_command, resolve_spawn_command, ResolvedCommand};
+#[cfg(feature = "full")]
 use crate::pty::subagent::ensure_subagent_watcher;
+#[cfg(feature = "full")]
+use crate::pty::trace::{emit_pty_io_trace, emit_spawn_trace};
 #[cfg(feature = "full")]
 use crate::sanitizer::spawn_sanitizer_task;
 #[cfg(feature = "full")]
@@ -617,10 +621,40 @@ pub async fn spawn_agent(
 
     validate_spawn(&server_state, config.max_agents, &tag)?;
 
+    emit_spawn_trace(
+        &bus_tx,
+        &tag,
+        format!("loading driver `{driver_name}`"),
+        config.spawn_debug,
+    );
+
+    let resolved = resolve_spawn_command(&driver.executable, &driver.args)?;
+    let command_line = format_resolved_command(&resolved);
+    emit_spawn_trace(
+        &bus_tx,
+        &tag,
+        format!("command: {command_line}"),
+        config.spawn_debug,
+    );
+
     let (agent, ring_buffer) = if pty_skip_mode() {
-        spawn_stdio_process(driver_name, &driver, tag.clone(), &role_name, perms)?
+        spawn_stdio_process(
+            driver_name,
+            &driver,
+            &resolved,
+            tag.clone(),
+            &role_name,
+            perms,
+        )?
     } else {
-        spawn_pty_process(driver_name, &driver, tag.clone(), &role_name, perms)?
+        spawn_pty_process(
+            driver_name,
+            &driver,
+            &resolved,
+            tag.clone(),
+            &role_name,
+            perms,
+        )?
     };
     let agent = Arc::new(agent);
     let id = agent.id;
@@ -635,6 +669,20 @@ pub async fn spawn_agent(
     server_state.agents.insert(id, Arc::clone(&agent));
     sync_agent_pty(&server_state, id)?;
 
+    let _ = bus_tx.send(BusEvent::AgentSpawnStarted {
+        id,
+        tag: tag.clone(),
+        driver: driver_name.to_string(),
+        role: role_name.clone(),
+        command_line: command_line.clone(),
+    });
+    emit_spawn_trace(
+        &bus_tx,
+        &tag,
+        "PTY process running; init_sequence + induction next",
+        config.spawn_debug,
+    );
+
     let debug_sink = if config.pty_debug_log {
         Some(PtyDebugSink::spawn(db, id))
     } else {
@@ -643,12 +691,14 @@ pub async fn spawn_agent(
 
     let reader_agent = Arc::clone(&agent);
     let reader_bus = bus_tx.clone();
+    let spawn_debug = config.spawn_debug;
     if pty_skip_mode() {
         tokio::spawn(stdio_reader_task(
             reader_agent,
             ring_buffer,
             reader_bus,
             debug_sink,
+            spawn_debug,
         ));
     } else {
         tokio::spawn(pty_reader_task(
@@ -656,6 +706,7 @@ pub async fn spawn_agent(
             ring_buffer,
             reader_bus,
             debug_sink,
+            spawn_debug,
         ));
     }
 
@@ -674,9 +725,22 @@ pub async fn spawn_agent(
         let induction_agent = Arc::clone(&agent);
         let induction_state = Arc::clone(&server_state);
         let induction_bus = bus_tx.clone();
+        let induction_debug = config.spawn_debug;
         tokio::spawn(async move {
-            run_init_sequence(init_agent, init_driver).await;
-            run_induction(induction_agent, induction_state, induction_bus).await;
+            run_init_sequence(
+                init_agent,
+                init_driver,
+                induction_bus.clone(),
+                induction_debug,
+            )
+            .await;
+            run_induction(
+                induction_agent,
+                induction_state,
+                induction_bus,
+                induction_debug,
+            )
+            .await;
         });
     }
 
@@ -685,19 +749,43 @@ pub async fn spawn_agent(
     Ok(id)
 }
 
+/// Apply driver env + AgentHub defaults onto a PTY command builder.
+#[cfg(feature = "full")]
+fn configure_command_builder(cmd: &mut CommandBuilder, driver: &DriverProfile) {
+    for (key, value) in &driver.env {
+        cmd.env(key, value);
+    }
+    cmd.env("TERM", "dumb");
+    cmd.env("NO_COLOR", "1");
+    cmd.env("AGENTHUB", "1");
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.cwd(cwd);
+    }
+}
+
+#[cfg(feature = "full")]
+fn build_pty_command(resolved: &ResolvedCommand) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(&resolved.program);
+    for arg in &resolved.args {
+        cmd.arg(arg);
+    }
+    cmd
+}
+
 /// Spawn a driver with piped stdin/stdout (CI / `AGENTHUB_SKIP_PTY=1` path).
 #[cfg(feature = "full")]
 fn spawn_stdio_process(
     driver_name: &str,
     driver: &DriverProfile,
+    resolved: &ResolvedCommand,
     tag: String,
     role_name: &str,
     perms: Permissions,
 ) -> Result<(AgentPty, Arc<PtyRingBuffer>)> {
     use std::process::{Command, Stdio};
 
-    let mut cmd = Command::new(&driver.executable);
-    for arg in &driver.args {
+    let mut cmd = Command::new(&resolved.program);
+    for arg in &resolved.args {
         cmd.arg(arg);
     }
     for (key, value) in &driver.env {
@@ -706,6 +794,9 @@ fn spawn_stdio_process(
     cmd.env("TERM", "dumb");
     cmd.env("NO_COLOR", "1");
     cmd.env("AGENTHUB", "1");
+    if let Ok(cwd) = std::env::current_dir() {
+        cmd.current_dir(cwd);
+    }
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
@@ -756,6 +847,7 @@ fn spawn_stdio_process(
 fn spawn_pty_process(
     driver_name: &str,
     driver: &DriverProfile,
+    resolved: &ResolvedCommand,
     tag: String,
     role_name: &str,
     perms: Permissions,
@@ -770,16 +862,8 @@ fn spawn_pty_process(
         })
         .map_err(|e| AgentHubError::Pty(format!("openpty failed: {e}")))?;
 
-    let mut cmd = CommandBuilder::new(&driver.executable);
-    for arg in &driver.args {
-        cmd.arg(arg);
-    }
-    for (key, value) in &driver.env {
-        cmd.env(key, value);
-    }
-    cmd.env("TERM", "dumb");
-    cmd.env("NO_COLOR", "1");
-    cmd.env("AGENTHUB", "1");
+    let mut cmd = build_pty_command(resolved);
+    configure_command_builder(&mut cmd, driver);
 
     let child = pair
         .slave
@@ -829,10 +913,16 @@ fn spawn_pty_process(
 }
 
 #[cfg(feature = "full")]
-async fn run_init_sequence(agent: Arc<AgentPty>, driver: DriverProfile) {
+async fn run_init_sequence(
+    agent: Arc<AgentPty>,
+    driver: DriverProfile,
+    bus_tx: broadcast::Sender<BusEvent>,
+    spawn_debug: bool,
+) {
     for line in driver.init_sequence {
         tokio::time::sleep(Duration::from_millis(200)).await;
         let payload = format!("{line}\n");
+        emit_pty_io_trace(&bus_tx, &agent.tag, "in", payload.as_bytes(), spawn_debug);
         if let Err(e) = agent.write_stdin(payload.as_bytes()) {
             tracing::warn!(agent = %agent.tag, "init_sequence write failed: {e}");
         }
@@ -849,7 +939,15 @@ pub fn spawn_test_pty_agent(
     let driver = load_driver_profile_from_dir(drivers_dir, driver_name)?;
     driver.validate()?;
     let perms = Permissions::VIEW_CHANNEL | Permissions::SEND_MESSAGES;
-    let (agent, _) = spawn_pty_process(driver_name, &driver, tag.to_string(), "Builder", perms)?;
+    let resolved = resolve_spawn_command(&driver.executable, &driver.args)?;
+    let (agent, _) = spawn_pty_process(
+        driver_name,
+        &driver,
+        &resolved,
+        tag.to_string(),
+        "Builder",
+        perms,
+    )?;
     Ok(Arc::new(agent))
 }
 

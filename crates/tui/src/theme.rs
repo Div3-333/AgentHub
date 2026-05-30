@@ -99,6 +99,7 @@ impl Theme {
         Style::default().fg(match status {
             AgentStatus::Dead => self.sidebar_dead,
             AgentStatus::Muted => self.sidebar_muted,
+            AgentStatus::Initializing => self.sidebar_thinking,
             _ => self.sidebar_online,
         })
     }
@@ -106,6 +107,7 @@ impl Theme {
     /// §15.3 status detail colors for sidebar line 2 and DM header.
     pub fn status_detail_style(&self, status: AgentStatus) -> Style {
         Style::default().fg(match status {
+            AgentStatus::Initializing => self.sidebar_thinking,
             AgentStatus::Idle => self.sidebar_online,
             AgentStatus::Thinking => self.sidebar_thinking,
             AgentStatus::Muted => self.sidebar_muted,

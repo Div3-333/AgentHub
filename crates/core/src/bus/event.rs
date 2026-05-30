@@ -14,6 +14,27 @@ pub enum BusEvent {
         tag: String,
         role: String,
     },
+    /// PTY process started; agent is initializing (shown in sidebar before READY).
+    AgentSpawnStarted {
+        id: Uuid,
+        tag: String,
+        driver: String,
+        role: String,
+        command_line: String,
+    },
+    /// Spawn lifecycle step (`spawn_debug` or always for errors).
+    SpawnTrace {
+        tag: String,
+        message: String,
+        timestamp: DateTime<Utc>,
+    },
+    /// Raw PTY traffic preview (`spawn_debug` only).
+    PtyIoTrace {
+        tag: String,
+        direction: String,
+        preview: String,
+        timestamp: DateTime<Utc>,
+    },
     /// An agent's process has died (crash, kick, or natural exit).
     AgentOffline {
         id: Uuid,

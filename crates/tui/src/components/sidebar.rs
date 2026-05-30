@@ -14,6 +14,7 @@ use ratatui::{
 /// §15.3 status glyphs (also used in DM header).
 pub fn status_glyph(status: AgentStatus) -> &'static str {
     match status {
+        AgentStatus::Initializing => "◌",
         AgentStatus::Idle => "●",
         AgentStatus::Thinking => "⏳",
         AgentStatus::Muted => "🔇",
@@ -29,6 +30,7 @@ pub fn presence_glyph(status: AgentStatus) -> &'static str {
     match status {
         AgentStatus::Dead => "💀",
         AgentStatus::Muted => "○",
+        AgentStatus::Initializing => "◌",
         _ => "●",
     }
 }
@@ -36,6 +38,7 @@ pub fn presence_glyph(status: AgentStatus) -> &'static str {
 /// Line-2 detail icon (mockup uses ✅ for idle).
 pub fn status_detail_icon(status: AgentStatus) -> &'static str {
     match status {
+        AgentStatus::Initializing => "◌",
         AgentStatus::Idle => "✅",
         AgentStatus::Thinking => "⏳",
         AgentStatus::Muted => "🔇",
@@ -48,6 +51,7 @@ pub fn status_detail_icon(status: AgentStatus) -> &'static str {
 
 pub fn status_label(status: AgentStatus) -> &'static str {
     match status {
+        AgentStatus::Initializing => "Starting…",
         AgentStatus::Idle => "Idle",
         AgentStatus::Thinking => "Thinking...",
         AgentStatus::Muted => "Muted",

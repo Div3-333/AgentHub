@@ -1340,6 +1340,11 @@ impl DbClient {
                 )
                 .await?;
             }
+            BusEvent::AgentSpawnStarted { tag, driver, .. } => {
+                self.insert_audit_message(session_id, &format!("Spawn started @{tag} ({driver})"))
+                    .await?;
+            }
+            BusEvent::SpawnTrace { .. } | BusEvent::PtyIoTrace { .. } => {}
             other => {
                 self.insert_audit_message(session_id, &format!("{other:?}"))
                     .await?;

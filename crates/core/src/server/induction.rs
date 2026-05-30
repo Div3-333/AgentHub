@@ -9,6 +9,7 @@ use tokio::sync::broadcast;
 
 use crate::bus::BusEvent;
 use crate::error::{AgentHubError, Result};
+use crate::pty::trace::{emit_pty_io_trace, emit_spawn_trace};
 use crate::pty::{AgentPty, PtyStatus};
 use crate::server::modes::{get_mode, simplified_induction, WorkspaceModeId};
 use crate::server::state::ServerState;
@@ -135,11 +136,25 @@ pub async fn run_induction(
     agent: Arc<AgentPty>,
     state: Arc<ServerState>,
     bus_tx: broadcast::Sender<BusEvent>,
+    spawn_debug: bool,
 ) {
+    emit_spawn_trace(
+        &bus_tx,
+        &agent.tag,
+        "injecting induction prompt",
+        spawn_debug,
+    );
     let prompt = render_induction_prompt(&agent, &state);
     let payload = format!("[System]: AGENTHUB induction\n{prompt}\n");
+    emit_pty_io_trace(&bus_tx, &agent.tag, "in", payload.as_bytes(), spawn_debug);
     if let Err(e) = agent.write_stdin(payload.as_bytes()) {
         tracing::warn!(agent = %agent.tag, "induction write failed: {e}");
+        emit_spawn_trace(
+            &bus_tx,
+            &agent.tag,
+            format!("induction write failed: {e}"),
+            true,
+        );
     }
 
     let ring = agent.ring_buffer();
@@ -165,6 +180,7 @@ pub async fn run_induction(
 
     match ready {
         Ok(true) => {
+            emit_spawn_trace(&bus_tx, &tag, "induction READY received", spawn_debug);
             let _ = bus_tx.send(BusEvent::AgentOnline {
                 id,
                 tag: tag.clone(),
@@ -180,6 +196,12 @@ pub async fn run_induction(
                 agent = %tag,
                 error = %AgentHubError::InductionTimeout(id),
                 "induction timed out"
+            );
+            emit_spawn_trace(
+                &bus_tx,
+                &tag,
+                "induction timed out (30s) — agent may still respond",
+                true,
             );
             let _ = bus_tx.send(BusEvent::SystemMessage {
                 content: format!(

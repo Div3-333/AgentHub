@@ -38,7 +38,7 @@ Binary: `target/release/agenthub` (or `agenthub.exe` on Windows).
 
 | Path | Purpose |
 |------|---------|
-| `~/.agenthub/config.json` | Default mode, paths, `max_agents`, theme, `log_level`, `pty_debug_log` (default `false`) |
+| `~/.agenthub/config.json` | Default mode, paths, `max_agents`, theme, `log_level`, `pty_debug_log`, `spawn_debug` (default `false`) |
 | `~/.agenthub/agenthub.db` | SQLite session log (WAL mode) |
 | `~/.agenthub/drivers/` | Optional custom driver JSON (falls back to repo `drivers/`) |
 | `.agenthub_shadow/` (in project CWD) | VFS snapshot copies (`shadow_dir` in config) |
@@ -288,6 +288,14 @@ Set `"pty_debug_log": true` in `~/.agenthub/config.json` and restart.
 - Chunks are **zstd-compressed**
 - With DB: `pty_debug_log` table; without DB: `~/.agenthub/debug/{agent_id}/*.zst`
 - Entries older than **48 hours** rotated on startup
+
+### Spawn debug (live TUI trace)
+
+Set `"spawn_debug": true` in `~/.agenthub/config.json` and restart.
+
+- Chat shows `[spawn @tag] …` lifecycle steps and `[pty @tag in|out] …` PTY previews
+- Agents appear in the sidebar immediately as **Starting…** (`AgentSpawnStarted`) before induction READY
+- Logs also go to `~/.agenthub/agenthub.log` (not the TUI screen)
 
 **Privacy:** may capture prompt-like CLI output. Keep disabled on shared machines.
 
