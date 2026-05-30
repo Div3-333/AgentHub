@@ -50,9 +50,9 @@ See **v0.2 — Shipped** below. Remaining polish:
 
 | Gap | Workaround today |
 |-----|------------------|
-| **Interactive revert confirm** | `/undo` runs immediately; TUI confirmation UX planned for v0.3 |
-| **Channel management UI** | `create_channel` via core API; no `/channel` slash yet |
-| **GitHub release assets** | Push `v0.2.0` tag to publish binaries |
+| **Interactive revert confirm** | Shipped in v0.3 — `/undo` and Ctrl+Z show Y/n overlay |
+| **Channel management UI** | Shipped in v0.3 — `/channel create|delete|assign|remove|list` |
+| **GitHub release assets** | Tag `v0.3.0` after CI green |
 
 ---
 
@@ -72,9 +72,22 @@ See **v0.2 — Shipped** below. Remaining polish:
 
 ---
 
-## v0.3 — Planned
+## v0.3 — Shipped (0.3.0)
 
-### Nice-to-have (post v0.2)
+**Goal:** CI green + UX polish from v0.2 gaps.
+
+| Feature | Status |
+|---------|--------|
+| **CI** | `cargo fmt` clean; `AGENTHUB_SKIP_PTY=1` on all OS; tarpaulin `--lib --test-threads=1` |
+| **Interactive revert** | TUI Y/n overlay for `/undo` and Ctrl+Z; `/undo --yes` for scripts |
+| **`/channel`** | Server-mode channel create/delete/assign/remove/list |
+| **Welcome banner** | Versioned quickstart in live TUI |
+
+---
+
+## v0.4 — Planned
+
+### Nice-to-have (post v0.3)
 
 - APFS / Btrfs CoW snapshot fast path
 - Additional driver profiles (Copilot CLI, custom community JSON)
