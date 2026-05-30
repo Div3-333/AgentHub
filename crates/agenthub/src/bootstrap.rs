@@ -170,6 +170,11 @@ impl AgentHubStack {
         let theme = self.config.theme.clone();
         let workspace_mode = self.tui_workspace_mode();
 
+        // Keep slash commands (/spawn, /kick, …) on this runtime so PTY reader and
+        // induction tasks spawned during `block_on` are not dropped when a one-off
+        // current-thread runtime would exit (agents stuck in "Starting…").
+        let _runtime_guard = self.runtime.enter();
+
         let tui_result = catch_unwind(AssertUnwindSafe(|| {
             agenthub_tui::run_with_bridge(bridge, bus_rx, &theme, workspace_mode)
         }));

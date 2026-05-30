@@ -366,14 +366,16 @@ pub fn escalate_kill(pid: u32) {
 
     #[cfg(windows)]
     {
+        if windows_process_exited(pid) {
+            return;
+        }
+
         const GRACE_MS: u64 = 100;
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string()])
-            .status();
+        windows_taskkill(&["/PID", &pid.to_string()]);
         std::thread::sleep(Duration::from_millis(GRACE_MS));
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        if !windows_process_exited(pid) {
+            windows_taskkill(&["/PID", &pid.to_string(), "/T", "/F"]);
+        }
 
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
@@ -468,6 +470,22 @@ fn windows_open_thread(thread_id: u32) -> std::io::Result<windows_sys::Win32::Fo
     } else {
         Ok(handle)
     }
+}
+
+#[cfg(windows)]
+fn windows_taskkill(args: &[&str]) {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let _ = Command::new("taskkill")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 }
 
 #[cfg(windows)]

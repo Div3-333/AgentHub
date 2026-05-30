@@ -1,7 +1,7 @@
 {
   "name": "cursor",
   "display_name": "Cursor CLI",
-  "executable": "cursor",
+  "executable": "cursor-agent",
   "args": [],
   "env": { "NO_COLOR": "1", "TERM": "dumb" },
   "prompt_regex": "^>\\s*$",

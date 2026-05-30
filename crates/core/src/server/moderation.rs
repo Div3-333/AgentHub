@@ -524,8 +524,19 @@ pub fn parse_spawn_args<'a>(args: &'a [&'a str]) -> Result<(&'a str, SpawnOption
                 options.tag = Some((*tag).to_string());
                 i += 1;
             }
+            tag if !tag.starts_with('-') => {
+                if options.tag.is_some() {
+                    return Err(AgentHubError::Config(format!(
+                        "unexpected extra argument `{tag}` (use --tag {tag})"
+                    )));
+                }
+                options.tag = Some(tag.to_string());
+                i += 1;
+            }
             flag => {
-                return Err(AgentHubError::Config(format!("unknown spawn flag: {flag}")));
+                return Err(AgentHubError::Config(format!(
+                    "unknown spawn flag: {flag} (use --role or --tag)"
+                )));
             }
         }
     }
@@ -713,5 +724,17 @@ mod tests {
         assert_eq!(parse_duration("5m").unwrap(), Duration::from_secs(300));
         assert_eq!(parse_duration("2h").unwrap(), Duration::from_secs(7200));
         assert!(parse_duration("bad").is_err());
+    }
+
+    #[test]
+    fn parse_spawn_args_accepts_shorthand_tag() {
+        let (driver, opts) = parse_spawn_args(&["cursor", "cli"]).expect("parse");
+        assert_eq!(driver, "cursor");
+        assert_eq!(opts.tag.as_deref(), Some("cli"));
+    }
+
+    #[test]
+    fn parse_spawn_args_rejects_unknown_flag() {
+        assert!(parse_spawn_args(&["gemini", "--nope", "x"]).is_err());
     }
 }

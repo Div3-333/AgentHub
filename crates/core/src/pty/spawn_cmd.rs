@@ -48,6 +48,9 @@ fn resolve_windows(executable: &str, driver_args: &[String]) -> Result<ResolvedC
         .map_err(|e| AgentHubError::Pty(format!("where.exe failed for `{executable}`: {e}")))?;
 
     if !output.status.success() {
+        if let Some(fallback) = windows_executable_fallback(executable) {
+            return wrap_windows_path(&fallback, driver_args);
+        }
         return Err(AgentHubError::Pty(format!(
             "executable `{executable}` not found on PATH (install the CLI or set an absolute path in the driver JSON)"
         )));
@@ -68,6 +71,66 @@ fn resolve_windows(executable: &str, driver_args: &[String]) -> Result<ResolvedC
 
     candidates.sort_by_key(|candidate| extension_priority(candidate));
     wrap_windows_path(&candidates[0], driver_args)
+}
+
+/// Alternate names / install locations when `where.exe` misses the driver shim.
+#[cfg(windows)]
+fn windows_executable_fallback(executable: &str) -> Option<PathBuf> {
+    let alts: &[&str] = match executable.to_ascii_lowercase().as_str() {
+        "cursor" | "cursor-agent" => &["cursor-agent", "cursor"][..],
+        _ => return None,
+    };
+
+    for alt in alts {
+        if alt.eq_ignore_ascii_case(executable) {
+            continue;
+        }
+        if let Ok(output) = std::process::Command::new("where.exe").arg(alt).output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(PathBuf::from)?;
+                if path.is_file() {
+                    return Some(path);
+                }
+            }
+        }
+        if let Some(path) = windows_known_install_path(alt) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn windows_known_install_path(executable: &str) -> Option<PathBuf> {
+    let local = std::env::var_os("LOCALAPPDATA")?;
+    let local = PathBuf::from(local);
+    let candidates: Vec<PathBuf> = match executable {
+        "cursor-agent" => vec![
+            local.join("cursor-agent").join("cursor-agent.cmd"),
+            local.join("cursor-agent").join("cursor-agent.exe"),
+            local
+                .join("Programs")
+                .join("cursor")
+                .join("resources")
+                .join("app")
+                .join("bin")
+                .join("cursor.cmd"),
+        ],
+        "cursor" => vec![local
+            .join("Programs")
+            .join("cursor")
+            .join("resources")
+            .join("app")
+            .join("bin")
+            .join("cursor.cmd")],
+        _ => return None,
+    };
+    candidates.into_iter().find(|path| path.is_file())
 }
 
 #[cfg(windows)]
