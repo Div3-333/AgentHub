@@ -1,5 +1,8 @@
 //! Global configuration (`~/.agenthub/config.json`) and driver profiles.
 
+#[path = "config/driver_defaults.rs"]
+mod driver_defaults;
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -315,7 +318,7 @@ pub fn load_driver_profile_from_dir(drivers_dir: &Path, name: &str) -> Result<Dr
         }
     };
     let contents = std::fs::read_to_string(&path)?;
-    let profile: DriverProfile = serde_json::from_str(&contents).map_err(|e| {
+    let mut profile: DriverProfile = serde_json::from_str(&contents).map_err(|e| {
         AgentHubError::Config(format!(
             "failed to parse driver profile {}: {e}",
             path.display()
@@ -330,6 +333,7 @@ pub fn load_driver_profile_from_dir(drivers_dir: &Path, name: &str) -> Result<Dr
             ),
         });
     }
+    driver_defaults::apply_driver_orchestration_defaults(&mut profile);
     profile.validate()?;
     Ok(profile)
 }
@@ -603,5 +607,25 @@ mod tests {
         assert!(profile
             .auto_reply_patterns
             .contains_key("Continue\\? \\(Y/n\\)"));
+    }
+
+    #[test]
+    fn loaded_drivers_merge_orchestration_defaults() {
+        let gemini =
+            load_driver_profile_from_dir(&bundled_drivers_dir(), "gemini").expect("gemini");
+        assert!(gemini.args.iter().any(|a| a == "--skip-trust"));
+        assert!(gemini
+            .auto_reply_patterns
+            .contains_key("Do you trust the files in this folder"));
+
+        let cursor =
+            load_driver_profile_from_dir(&bundled_drivers_dir(), "cursor").expect("cursor");
+        assert!(cursor.args.iter().any(|a| a == "--trust"));
+
+        let codex = load_driver_profile_from_dir(&bundled_drivers_dir(), "codex").expect("codex");
+        assert!(codex
+            .auto_reply_patterns
+            .contains_key("Do you trust the contents of this directory"));
+        assert!(codex.args.iter().any(|a| a == "--ask-for-approval"));
     }
 }

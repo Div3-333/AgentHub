@@ -276,8 +276,12 @@ Each CLI is described by JSON in `drivers/` or `~/.agenthub/drivers/<name>.json`
 | `executable`, `args`, `env` | Launch (`NO_COLOR`, `TERM=dumb`) |
 | `prompt_regex` | Turn detection on last line |
 | `silence_timeout_ms` | Fallback if prompt never matches |
-| `auto_reply_patterns` | Auto-answer interactive prompts |
+| `auto_reply_patterns` | Auto-answer interactive prompts (merged with built-in trust/Y/n patterns) |
 | `rate_limit_patterns` | Marks agent `RateLimited` |
+
+AgentHub merges **orchestration defaults** into every driver at load time: shared trust-folder / Y-n prompt auto-replies, plus per-CLI flags (e.g. Gemini `--skip-trust`, Cursor `--trust`, Codex workspace trust for the current directory). Custom patterns in your JSON override the built-in ones when the regex key matches.
+
+Subagent capture applies to **all** drivers: only the root spawned PTY is a parent (no `sub-1-sub-2` chains), at most **4** subagents per agent, and Windows shim PIDs (`conhost`, `cmd`, …) are ignored.
 
 If an agent never leaves “Thinking”, tune `prompt_regex` or increase `silence_timeout_ms`.
 
