@@ -243,12 +243,13 @@ When wired (v0.2), revert will confirm overwrite count, may prompt to delete fil
 | **Ctrl+S** | Export chat to file |
 | **Ctrl+Q** | Quit (confirm) |
 | **Ctrl+L** | Clear input |
-| **j/k**, PgUp/PgDn, **G** | Scroll chat |
-| **/** (empty input) | Search chat history |
-| **Tab** | Complete `@tags` and `/commands` |
+| **F4** | Toggle chat scroll (j/k) vs typing in input |
+| **j/k**, PgUp/PgDn, **G** | Scroll chat (j/k need F4 or click chat; **G** always jumps to latest) |
+| **Ctrl+/** | Search chat history |
+| **Tab** | Complete `@tags` and `/commands` (needs ≥2 chars after `/` or `@`) |
 | **Esc** | Cancel overlay, racing, search |
 
-Footer: `F1:Help  F2:Mode  F3:Snapshot  Ctrl+Z:Undo  Ctrl+R:Race  Esc:Cancel`
+Footer: `F1:Help  F4:Scroll  Ctrl+/:Search  F5:Spawn  Ctrl+Z:Undo  Ctrl+R:Race  Esc:Cancel`
 
 ---
 

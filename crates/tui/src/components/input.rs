@@ -17,13 +17,20 @@ pub fn render(
     display: &str,
     cursor: usize,
     search_mode: bool,
+    chat_nav_focus: bool,
     theme: &Theme,
 ) {
     if area.width == 0 || area.height == 0 {
         return;
     }
 
-    let title = if search_mode { " SEARCH " } else { " INPUT " };
+    let title = if search_mode {
+        " SEARCH "
+    } else if chat_nav_focus {
+        " CHAT SCROLL (F4→input) "
+    } else {
+        " INPUT (F4→scroll) "
+    };
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -48,13 +55,19 @@ pub fn render(
 
     let safe_cursor = cursor.min(display.len());
     let before = &display[..safe_cursor];
-    let at_cursor = display.get(safe_cursor..=safe_cursor).unwrap_or(" ");
-    let after = &display[safe_cursor.saturating_add(at_cursor.len())..];
+    let (at_cursor, after_start) = if safe_cursor < display.len() {
+        let ch = display[safe_cursor..].chars().next().unwrap();
+        let len = ch.len_utf8();
+        (ch.to_string(), safe_cursor + len)
+    } else {
+        (" ".into(), display.len())
+    };
+    let after = &display[after_start.min(display.len())..];
 
     lines.push(Line::from(vec![
         Span::styled(before.to_string(), Style::default().fg(theme.input)),
         Span::styled(
-            at_cursor.to_string(),
+            at_cursor,
             Style::default()
                 .fg(theme.cursor)
                 .add_modifier(Modifier::UNDERLINED | Modifier::BOLD),

@@ -40,7 +40,8 @@ pub struct CoreBridge {
     pub bus_tx: broadcast::Sender<BusEvent>,
 }
 
-pub const FOOTER_HINT: &str = "F1:Help  F2:Mode  F3:Snapshot  Ctrl+Z:Undo  Ctrl+R:Race  Esc:Cancel";
+pub const FOOTER_HINT: &str =
+    "F1:Help  F4:Scroll  Ctrl+/:Search  F5:Spawn  Ctrl+Z:Undo  Ctrl+R:Race  Esc:Cancel";
 
 /// F1 overlay and `/help` share [`crate::events::TUI_HELP`].
 pub use crate::events::TUI_HELP as HELP_TEXT;
@@ -155,6 +156,13 @@ pub enum Focus {
     #[default]
     Input,
     Chat,
+}
+
+/// Pane hit-tested for mouse focus (Part 15.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneTarget {
+    Chat,
+    Input,
 }
 
 /// High-level UI state machine (Part 15.1–15.2).
@@ -339,6 +347,30 @@ impl App {
     pub fn chat_viewport_rows(&self) -> usize {
         let areas = self.layout_areas();
         self.chat_visible_rows(areas.chat.height)
+    }
+
+    /// Cursor index into the string shown in the input/search widget.
+    pub fn input_display_cursor(&self) -> usize {
+        if self.search_mode {
+            "search: ".len() + self.search_query.len()
+        } else {
+            2 + self.input_cursor
+        }
+    }
+
+    /// Map terminal cell to chat or input pane (mouse focus).
+    pub fn hit_test(&self, col: u16, row: u16) -> Option<PaneTarget> {
+        use ratatui::layout::Position;
+
+        let pos = Position::new(col, row);
+        let areas = self.layout_areas();
+        if areas.input.contains(pos) {
+            return Some(PaneTarget::Input);
+        }
+        if areas.chat.contains(pos) {
+            return Some(PaneTarget::Chat);
+        }
+        None
     }
 
     pub fn agent_tags(&self) -> Vec<String> {
@@ -896,8 +928,9 @@ impl App {
             f,
             areas.input,
             &input_text,
-            self.input_cursor,
+            self.input_display_cursor(),
             self.search_mode,
+            self.focus == Focus::Chat,
             &self.theme,
         );
         let footer = if self.overlay == Overlay::QuitConfirm {
@@ -954,8 +987,9 @@ impl App {
             f,
             areas.input,
             &input_text,
-            self.input_cursor,
+            self.input_display_cursor(),
             self.search_mode,
+            self.focus == Focus::Chat,
             &self.theme,
         );
         let footer = if self.overlay == Overlay::QuitConfirm {

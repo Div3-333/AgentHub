@@ -67,8 +67,9 @@ Key bindings (Part 15.2):
   j / Down              Scroll chat down
   k / Up                Scroll chat up
   PgDn / PgUp           Scroll one page
-  G                     Jump to latest message
-  /                     Search chat history
+  G                     Jump to latest message (any time)
+  F4                    Toggle chat scroll vs input typing
+  Ctrl+/                Search chat history
   Esc                   Cancel overlay / search / racing
   Enter                 Send message or run slash command
   Ctrl+Enter            Activate LLM Racing (multi @tag)
@@ -88,6 +89,25 @@ Key bindings (Part 15.2):
 
 /// Alias for chat `/help` output (same text as F1).
 pub const SLASH_HELP: &str = TUI_HELP;
+
+/// Mouse click: focus chat (j/k scroll) or input (typing / slash commands).
+pub fn handle_mouse_click(app: &mut App, col: u16, row: u16) {
+    match app.hit_test(col, row) {
+        Some(crate::app::PaneTarget::Chat) => {
+            app.focus = Focus::Chat;
+            app.status_message = "Chat scroll (j/k/G) — F4 back to input".into();
+        }
+        Some(crate::app::PaneTarget::Input) => {
+            app.focus = Focus::Input;
+            if app.search_mode {
+                app.search_mode = false;
+                app.search_query.clear();
+            }
+            app.status_message.clear();
+        }
+        None => {}
+    }
+}
 
 /// Handle a key press; returns `true` when the app should exit.
 ///
@@ -152,6 +172,16 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
         KeyCode::F(3) => {
             route_slash_command(app, "/snapshot");
         }
+        KeyCode::F(4) => {
+            app.focus = match app.focus {
+                Focus::Input => Focus::Chat,
+                Focus::Chat => Focus::Input,
+            };
+            app.status_message = match app.focus {
+                Focus::Chat => "Chat scroll (j/k/G) — F4 back to input".into(),
+                Focus::Input => "Input focus — F4 for chat scroll".into(),
+            };
+        }
         KeyCode::F(5) => {
             app.overlay = Overlay::SpawnDialog;
             app.spawn_buffer.clear();
@@ -178,15 +208,19 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> bool {
                 app.input_cursor = 0;
             }
         }
-        KeyCode::Char('g') | KeyCode::Char('G') if app.focus == Focus::Chat => {
-            app.scroll_chat_to_bottom(viewport);
-        }
-        KeyCode::Char('/') if app.focus == Focus::Input && app.input_buffer.is_empty() => {
+        KeyCode::Char('/') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             app.search_mode = true;
             app.search_query.clear();
         }
-        KeyCode::Char('j') if app.focus == Focus::Chat => app.scroll_chat_down(1, viewport),
-        KeyCode::Char('k') if app.focus == Focus::Chat => app.scroll_chat_up(1),
+        KeyCode::Char('G') if app.overlay == Overlay::None && !app.search_mode => {
+            app.scroll_chat_to_bottom(viewport);
+        }
+        KeyCode::Char('j') if app.focus == Focus::Chat && app.overlay == Overlay::None => {
+            app.scroll_chat_down(1, viewport);
+        }
+        KeyCode::Char('k') if app.focus == Focus::Chat && app.overlay == Overlay::None => {
+            app.scroll_chat_up(1);
+        }
         KeyCode::Up => handle_up_arrow(app, viewport),
         KeyCode::Down => handle_down_arrow(app, viewport),
         KeyCode::PageDown => {
@@ -658,6 +692,10 @@ fn tab_complete(app: &mut App) {
         .map(|i| i + 1)
         .unwrap_or(0);
     let prefix = &app.input_buffer[word_start..app.input_cursor];
+    // Avoid replacing "/" with "/addrole" on lone slash or @ prefix.
+    if prefix.len() < 2 {
+        return;
+    }
     let mut candidates: Vec<String> = app
         .agent_tags()
         .into_iter()
@@ -715,6 +753,26 @@ mod tests {
     #[test]
     fn f1_help_overlay_matches_slash_help() {
         assert_eq!(crate::app::HELP_TEXT, SLASH_HELP);
+    }
+
+    #[test]
+    fn slash_spawn_types_into_input_not_search_mode() {
+        let mut app = App::new("dark");
+        for c in "/spawn".chars() {
+            handle_key(&mut app, key(KeyCode::Char(c)));
+        }
+        assert!(!app.search_mode);
+        assert_eq!(app.input_buffer, "/spawn");
+    }
+
+    #[test]
+    fn ctrl_slash_opens_search_mode() {
+        let mut app = App::new("dark");
+        handle_key(
+            &mut app,
+            key_mod(KeyCode::Char('/'), KeyModifiers::CONTROL),
+        );
+        assert!(app.search_mode);
     }
 
     #[test]
@@ -793,6 +851,40 @@ mod tests {
         let viewport = app.chat_viewport_rows();
         app.chat_scroll = app.max_chat_scroll(viewport);
         app.chat_scroll = 0;
+    }
+
+    #[test]
+    fn capital_g_jumps_to_bottom_from_input_focus() {
+        let mut app = App::new("dark");
+        fill_chat_for_scroll(&mut app);
+        assert_eq!(app.focus, Focus::Input);
+        handle_key(&mut app, key(KeyCode::Char('G')));
+        assert_eq!(
+            app.chat_scroll,
+            app.max_chat_scroll(app.chat_viewport_rows())
+        );
+    }
+
+    #[test]
+    fn f4_toggles_chat_scroll_focus() {
+        let mut app = App::new("dark");
+        fill_chat_for_scroll(&mut app);
+        handle_key(&mut app, key(KeyCode::F(4)));
+        assert_eq!(app.focus, Focus::Chat);
+        let viewport = app.chat_viewport_rows();
+        handle_key(&mut app, key(KeyCode::Char('j')));
+        assert!(app.chat_scroll > 0);
+        handle_key(&mut app, key(KeyCode::F(4)));
+        assert_eq!(app.focus, Focus::Input);
+    }
+
+    #[test]
+    fn tab_on_lone_slash_does_not_replace_buffer() {
+        let mut app = App::new("dark");
+        app.input_buffer = "/".into();
+        app.input_cursor = 1;
+        tab_complete(&mut app);
+        assert_eq!(app.input_buffer, "/");
     }
 
     #[test]
