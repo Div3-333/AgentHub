@@ -559,7 +559,10 @@ mod tests {
         windows,
         ignore = "spawn parent PID varies under cargo test; see match_child_processes_uses_mock_parent_tree"
     )]
-    #[cfg_attr(tarpaulin, ignore = "spawns child process; incompatible with tarpaulin")]
+    #[cfg_attr(
+        tarpaulin,
+        ignore = "spawns child process; incompatible with tarpaulin"
+    )]
     fn poll_new_children_finds_spawned_child() {
         if crate::pty::manager::pty_skip_mode() {
             return;
@@ -598,7 +601,10 @@ mod tests {
         windows,
         ignore = "spawn parent PID varies under cargo test; watcher logic covered on Unix"
     )]
-    #[cfg_attr(tarpaulin, ignore = "spawns child process; incompatible with tarpaulin")]
+    #[cfg_attr(
+        tarpaulin,
+        ignore = "spawns child process; incompatible with tarpaulin"
+    )]
     async fn watcher_detects_child_within_500ms() {
         if crate::pty::manager::pty_skip_mode() {
             return;
