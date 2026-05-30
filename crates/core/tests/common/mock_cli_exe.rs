@@ -21,7 +21,10 @@ fn mock_cli_debug_dir() -> std::path::PathBuf {
 
 fn mock_cli_executable() -> std::path::PathBuf {
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_mock_cli") {
-        return std::path::PathBuf::from(path);
+        let path = std::path::PathBuf::from(path);
+        if path.is_file() {
+            return path;
+        }
     }
     let debug_dir = mock_cli_debug_dir();
     for name in ["mock_cli.exe", "mock_cli"] {
